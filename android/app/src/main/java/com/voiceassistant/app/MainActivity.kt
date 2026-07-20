@@ -3,8 +3,10 @@ package com.voiceassistant.app
 import android.Manifest
 import android.app.SearchManager
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.speech.RecognitionService
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
@@ -264,6 +266,7 @@ class MainActivity : AppCompatActivity() {
             put("mic", hasMic())
             put("recognitionAvailable", SpeechRecognizer.isRecognitionAvailable(this@MainActivity))
             put("ttsReady", ttsReady)
+            put("recognizer", pickRecognizerComponent()?.packageName ?: "系统默认")
         }.toString()
     }
 
@@ -572,7 +575,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         recognizer?.destroy()
-        recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+        // 有些国产 ROM（如 vivo）默认绑定自家识别服务，第三方一调用就报错码 5(ERROR_CLIENT)。
+        // 这里优先绑定 Google 等可用的识别服务，绕开厂商那个不给第三方用的默认服务。
+        val comp = pickRecognizerComponent()
+        recognizer = (if (comp != null) SpeechRecognizer.createSpeechRecognizer(this, comp)
+        else SpeechRecognizer.createSpeechRecognizer(this)).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) { markRecogAlive(); dispatch("onSpeechStart") }
                 override fun onBeginningOfSpeech() { markRecogAlive() }
@@ -648,6 +655,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun firstResult(bundle: Bundle?): String? =
         bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+
+    // 在已安装的识别服务里挑一个能用的：优先 Google，其次任意非 vivo/bbk 的，最后才用默认。
+    // 目的是避开 vivo 自家那个不给第三方用、一调用就报错码 5 的默认服务。
+    private fun pickRecognizerComponent(): ComponentName? {
+        val services = try {
+            packageManager.queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+        } catch (_: Exception) { emptyList() }
+        if (services.isEmpty()) return null
+        fun pkg(i: android.content.pm.ResolveInfo) = i.serviceInfo.packageName.lowercase()
+        val pick = services.firstOrNull { pkg(it).contains("google") }
+            ?: services.firstOrNull { !pkg(it).contains("vivo") && !pkg(it).contains("bbk") }
+            ?: return null // 只有 vivo 自家服务时返回 null，退回系统默认（虽可能仍失败，但不至于更差）
+        return ComponentName(pick.serviceInfo.packageName, pick.serviceInfo.name)
+    }
 
     // ---------------- 聊天：原生流式请求 ----------------
     private fun runChat(payloadJson: String, seq: Int) {

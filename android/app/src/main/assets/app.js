@@ -170,6 +170,7 @@ diagnoseBtn.addEventListener('click', () => {
   const lines = [
     '麦克风权限：' + yn(d.mic),
     '语音识别服务：' + yn(d.recognitionAvailable),
+    '使用的识别引擎：' + (d.recognizer || '系统默认'),
     '朗读引擎：' + yn(d.ttsReady),
     '接口已填写：' + yn(configured),
   ];
