@@ -47,11 +47,20 @@
 - 不用时在设置里关掉即可。
 
 ### 常见接口填法
+
+> ⚠️ **API 密钥 ≠ ChatGPT / Gemini 会员账号**。App 需要的是“开发者 API 密钥”，和你在 ChatGPT/Gemini 手机 App 里用的会员订阅是两回事、单独获取：
+> - **Gemini**：去 `aistudio.google.com/apikey` **免费**领取 API Key（有免费额度，推荐先用这个）。
+> - **智谱**：去 `open.bigmodel.cn` 注册，控制台复制 Key，`glm-4-flash` 免费。
+> - **OpenAI**：去 `platform.openai.com` 开通并绑卡；**ChatGPT Plus 会员不包含 API 额度**。
+>
+> App 设置页顶部有“快速填入”，点一下自动填好地址和模型，你只需粘贴 Key。填好后点“↧ 拉取模型”可选择该账号下最新可用的模型。
+
 | 接口 | 接口类型 | 地址 | 模型 |
 | --- | --- | --- | --- |
+| Gemini（免费） | OpenAI 兼容 | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash` |
 | DeepSeek | OpenAI 兼容 | `https://api.deepseek.com/v1` | `deepseek-chat` |
 | Kimi | OpenAI 兼容 | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
-| 智谱 | OpenAI 兼容 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
+| 智谱（免费） | OpenAI 兼容 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
 | OpenAI | OpenAI 兼容 | `https://api.openai.com/v1` | `gpt-4o-mini` |
 | Claude | Anthropic | `https://api.anthropic.com` | `claude-haiku-4-5` |
 

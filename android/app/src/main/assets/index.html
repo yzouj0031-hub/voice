@@ -39,13 +39,14 @@
       <h2>设置</h2>
       <div class="preset-row">
         <span class="preset-label">快速填入</span>
+        <button type="button" class="preset" data-provider="openai" data-url="https://generativelanguage.googleapis.com/v1beta/openai" data-model="gemini-2.5-flash">Gemini·免费</button>
         <button type="button" class="preset" data-provider="openai" data-url="https://open.bigmodel.cn/api/paas/v4" data-model="glm-4-flash">智谱·免费</button>
         <button type="button" class="preset" data-provider="openai" data-url="https://api.deepseek.com/v1" data-model="deepseek-chat">DeepSeek</button>
         <button type="button" class="preset" data-provider="openai" data-url="https://api.moonshot.cn/v1" data-model="moonshot-v1-8k">Kimi</button>
         <button type="button" class="preset" data-provider="openai" data-url="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI</button>
         <button type="button" class="preset" data-provider="anthropic" data-url="https://api.anthropic.com" data-model="claude-haiku-4-5">Claude</button>
       </div>
-      <p class="tip">👆 点一个就自动填好“接口类型/地址/模型”，你只需在下面粘贴自己的 API 密钥。没有密钥？选“智谱·免费”，去 open.bigmodel.cn 注册后在控制台复制 Key 即可，glm-4-flash 免费。</p>
+      <p class="tip">👆 点一个就自动填好“接口类型/地址/模型”，你只需在下面粘贴自己的 API 密钥（注意：<b>API 密钥不等于 ChatGPT/Gemini 会员账号</b>，要到对应的开发者平台单独获取）。<br/>• <b>Gemini·免费</b>：去 aistudio.google.com/apikey 免费领 Key，填好后点“↧ 拉取模型”可选最新可用模型。<br/>• <b>智谱·免费</b>：去 open.bigmodel.cn 注册后在控制台复制 Key，glm-4-flash 免费。<br/>• OpenAI 需在 platform.openai.com 开通并绑卡（ChatGPT 会员不含 API）。</p>
       <label>接口类型
         <select id="s_provider">
           <option value="openai">OpenAI 兼容（通用）</option>
