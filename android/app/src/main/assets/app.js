@@ -20,6 +20,11 @@ const S = {
   wake: document.getElementById('s_wake'),
   wakeWord: document.getElementById('s_wakeWord'),
 };
+const fetchModelsBtn = document.getElementById('s_fetchModels');
+const testConnBtn = document.getElementById('s_testConn');
+const modelList = document.getElementById('modelList');
+const modelChips = document.getElementById('s_modelChips');
+const testResult = document.getElementById('s_testResult');
 
 let messages = loadHistory();
 let listening = false;
@@ -52,6 +57,11 @@ function openSettings() {
   S.system.value = c.system;
   S.wake.checked = c.wake;
   S.wakeWord.value = c.wakeWord;
+  // 每次打开清掉上次的模型列表和测试结果
+  modelChips.classList.add('hidden');
+  modelChips.innerHTML = '';
+  testResult.classList.add('hidden');
+  modelList.innerHTML = '';
   modal.classList.remove('hidden');
 }
 function closeSettings() { modal.classList.add('hidden'); }
@@ -98,6 +108,91 @@ settingsBtn.addEventListener('click', openSettings);
 document.getElementById('s_cancel').addEventListener('click', closeSettings);
 document.getElementById('s_save').addEventListener('click', saveSettings);
 modal.addEventListener('click', (e) => { if (e.target === modal) closeSettings(); });
+
+// ---------- 拉取模型 / 测试连接 ----------
+// 用设置框里"当前正在编辑"的值（不是已保存的），方便填完立刻验证
+function currentInput() {
+  return {
+    provider: S.provider.value,
+    baseUrl: S.baseUrl.value.trim(),
+    apiKey: S.apiKey.value.trim(),
+    model: S.model.value.trim(),
+  };
+}
+function showTestResult(msg, kind) {
+  testResult.textContent = msg;
+  testResult.className = 'test-result' + (kind ? ' ' + kind : '');
+}
+
+fetchModelsBtn.addEventListener('click', () => {
+  if (!N || !N.listModels) { showTestResult('请在语音助手 App 内使用。', 'err'); return; }
+  const c = currentInput();
+  if (!c.baseUrl || !c.apiKey) { showTestResult('请先填写接口地址和密钥。', 'err'); return; }
+  fetchModelsBtn.disabled = true;
+  fetchModelsBtn.textContent = '拉取中…';
+  showTestResult('正在拉取模型列表…', '');
+  N.listModels(JSON.stringify(c));
+});
+
+testConnBtn.addEventListener('click', () => {
+  if (!N || !N.testConnection) { showTestResult('请在语音助手 App 内使用。', 'err'); return; }
+  const c = currentInput();
+  if (!c.baseUrl || !c.apiKey || !c.model) { showTestResult('请先填写接口地址、密钥和模型。', 'err'); return; }
+  testConnBtn.disabled = true;
+  testConnBtn.textContent = '测试中…';
+  showTestResult('正在测试连接…', '');
+  N.testConnection(JSON.stringify(c));
+});
+
+// 原生回调：拉到的模型列表（字符串数组）
+window.onModelsResult = function (payload) {
+  fetchModelsBtn.disabled = false;
+  fetchModelsBtn.textContent = '↧ 拉取模型';
+  let ids;
+  try { ids = JSON.parse(payload); } catch { ids = []; }
+  if (!Array.isArray(ids) || ids.length === 0) {
+    showTestResult('没拿到模型列表，请手动填写模型名。', 'err');
+    return;
+  }
+  // 填充输入框的自动补全
+  modelList.innerHTML = '';
+  ids.forEach((id) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    modelList.appendChild(opt);
+  });
+  // 渲染成可点的小标签，点一下就填入模型名
+  modelChips.innerHTML = '';
+  ids.forEach((id) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.textContent = id;
+    chip.addEventListener('click', () => {
+      S.model.value = id;
+      [...modelChips.children].forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+    modelChips.appendChild(chip);
+  });
+  modelChips.classList.remove('hidden');
+  showTestResult(`拉到 ${ids.length} 个模型，点一个填入，或直接在上面输入。`, 'ok');
+};
+
+window.onModelsError = function (msg) {
+  fetchModelsBtn.disabled = false;
+  fetchModelsBtn.textContent = '↧ 拉取模型';
+  showTestResult(msg || '拉取失败。', 'err');
+};
+
+// 原生回调：测试连接结果 { ok, msg }
+window.onTestResult = function (payload) {
+  testConnBtn.disabled = false;
+  testConnBtn.textContent = '✓ 测试连接';
+  let data;
+  try { data = JSON.parse(payload); } catch { data = { ok: false, msg: payload }; }
+  showTestResult(data.msg || (data.ok ? '连接正常。' : '连接失败。'), data.ok ? 'ok' : 'err');
+};
 
 // 安卓返回键：优先关闭设置弹窗
 window.onAndroidBack = function () {

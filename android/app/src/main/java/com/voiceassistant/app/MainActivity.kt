@@ -237,6 +237,13 @@ class MainActivity : AppCompatActivity() {
         // 网页把 AI 解析出的动作数组（JSON）发过来，这里逐个用安卓原生能力执行。
         @JavascriptInterface
         fun performActions(json: String) = main.post { runActions(json) }
+
+        // ---- 拉取模型列表 / 测试连接（都走原生网络，绕开跨域）----
+        @JavascriptInterface
+        fun listModels(payloadJson: String) = net.execute { runListModels(payloadJson) }
+
+        @JavascriptInterface
+        fun testConnection(payloadJson: String) = net.execute { runTest(payloadJson) }
     }
 
     private fun runActions(json: String) {
@@ -619,6 +626,96 @@ class MainActivity : AppCompatActivity() {
             if (d?.optString("type") == "text_delta") d.optString("text") else null
         } else null
     } catch (_: Exception) { null }
+
+    // ---------------- 拉取模型列表 ----------------
+    // OpenAI 兼容：GET {baseUrl}/models；Anthropic：GET {baseUrl}/v1/models；两者返回都形如 {"data":[{"id":...}]}
+    private fun runListModels(payloadJson: String) {
+        try {
+            val p = JSONObject(payloadJson)
+            val provider = p.optString("provider", "openai")
+            val baseUrl = p.optString("baseUrl").trimEnd('/')
+            val apiKey = p.optString("apiKey")
+            if (baseUrl.isEmpty() || apiKey.isEmpty()) {
+                dispatch("onModelsError", "请先填写接口地址和密钥。"); return
+            }
+            val isAnthropic = provider == "anthropic"
+            val conn = (URL(if (isAnthropic) "$baseUrl/v1/models" else "$baseUrl/models")
+                .openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 15000
+                readTimeout = 20000
+                if (isAnthropic) {
+                    setRequestProperty("x-api-key", apiKey)
+                    setRequestProperty("anthropic-version", "2023-06-01")
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+            }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream))
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            if (code !in 200..299) {
+                dispatch("onModelsError", "接口返回 $code：${text.take(200)}"); return
+            }
+            val ids = JSONArray()
+            JSONObject(text).optJSONArray("data")?.let { data ->
+                for (i in 0 until data.length()) {
+                    data.optJSONObject(i)?.optString("id")?.takeIf { it.isNotEmpty() }?.let { ids.put(it) }
+                }
+            }
+            if (ids.length() == 0) dispatch("onModelsError", "接口没有返回模型列表，请手动填写模型名。")
+            else dispatch("onModelsResult", ids.toString())
+        } catch (e: Exception) {
+            dispatch("onModelsError", "拉取失败：${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    // ---------------- 测试连接 ----------------
+    // 用当前配置发一条极短的请求，验证地址 / 密钥 / 模型是否都可用
+    private fun runTest(payloadJson: String) {
+        fun result(ok: Boolean, msg: String) =
+            dispatch("onTestResult", JSONObject().put("ok", ok).put("msg", msg).toString())
+        try {
+            val p = JSONObject(payloadJson)
+            val provider = p.optString("provider", "openai")
+            val baseUrl = p.optString("baseUrl").trimEnd('/')
+            val apiKey = p.optString("apiKey")
+            val model = p.optString("model")
+            if (baseUrl.isEmpty() || apiKey.isEmpty() || model.isEmpty()) {
+                result(false, "请先填写接口地址、密钥和模型。"); return
+            }
+            val isAnthropic = provider == "anthropic"
+            val conn = (URL(if (isAnthropic) "$baseUrl/v1/messages" else "$baseUrl/chat/completions")
+                .openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 15000
+                readTimeout = 30000
+                setRequestProperty("Content-Type", "application/json")
+                if (isAnthropic) {
+                    setRequestProperty("x-api-key", apiKey)
+                    setRequestProperty("anthropic-version", "2023-06-01")
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+            }
+            val body = JSONObject().apply {
+                put("model", model)
+                put("max_tokens", 8)
+                put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", "你好")))
+            }
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                result(true, "连接正常，模型「$model」可用 ✓")
+            } else {
+                val err = (conn.errorStream ?: conn.inputStream)?.bufferedReader()?.use { it.readText() } ?: ""
+                result(false, "接口返回 $code：${err.take(200)}")
+            }
+        } catch (e: Exception) {
+            result(false, "连接失败：${e.message ?: e.javaClass.simpleName}")
+        }
+    }
 
     // ---------------- 调用网页里的回调 ----------------
     private fun dispatch(func: String, arg: String? = null) {

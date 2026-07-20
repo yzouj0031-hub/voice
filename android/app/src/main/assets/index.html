@@ -46,8 +46,15 @@
         <input id="s_apiKey" type="password" placeholder="sk-..." autocomplete="off" autocapitalize="off" spellcheck="false" />
       </label>
       <label>模型名
-        <input id="s_model" type="text" placeholder="deepseek-chat" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        <input id="s_model" type="text" placeholder="deepseek-chat" autocomplete="off" autocapitalize="off" spellcheck="false" list="modelList" />
       </label>
+      <datalist id="modelList"></datalist>
+      <div class="mini-actions">
+        <button id="s_fetchModels" type="button" class="btn-mini">↧ 拉取模型</button>
+        <button id="s_testConn" type="button" class="btn-mini">✓ 测试连接</button>
+      </div>
+      <div id="s_modelChips" class="chips hidden"></div>
+      <p id="s_testResult" class="test-result hidden"></p>
       <label>人设 / 系统提示词
         <textarea id="s_system" rows="3"></textarea>
       </label>
