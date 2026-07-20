@@ -74,6 +74,14 @@
         <textarea id="s_system" rows="3"></textarea>
       </label>
 
+      <label>语音输入方式
+        <select id="s_voiceMode">
+          <option value="system">系统识别（默认，快）</option>
+          <option value="cloud">☁️ 云端识别（不依赖手机语音服务，任何手机可用）</option>
+        </select>
+      </label>
+      <p class="tip">☁️ 云端识别：App 自己录音，直接把声音发给你的 AI 接口"听"，完全绕开手机系统的语音识别——自检里"语音识别服务 ✗"的手机（如部分 vivo/无谷歌服务机型）请选这个。用法：点麦克风开始录音，<b>再点一下发送</b>。要求所用模型能听音频（Gemini 系列可以，推荐 gemini-2.5-flash）。</p>
+
       <div class="switch-row">
         <div>
           <div class="switch-title">语音唤醒（喊一声就出现）</div>

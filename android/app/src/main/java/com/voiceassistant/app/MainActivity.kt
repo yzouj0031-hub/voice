@@ -1,14 +1,19 @@
 package com.voiceassistant.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.net.Uri
+import android.util.Base64
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -31,6 +36,7 @@ import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -75,6 +81,11 @@ class MainActivity : AppCompatActivity() {
 
     private val chatSeq = AtomicInteger(0)
     @Volatile private var currentConn: HttpURLConnection? = null
+
+    // 云端识别录音状态（不依赖系统语音识别，任何手机可用）
+    @Volatile private var recFlag = false      // 正在录音
+    @Volatile private var recSend = true       // 停止后是否发送（false=取消）
+    private var recThread: Thread? = null
 
     private var pageLoaded = false
     private var pendingWake = false
@@ -257,6 +268,16 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun testConnection(payloadJson: String) = net.execute { runTest(payloadJson) }
+
+        // ---- 云端识别：App 自己录音，直接把音频发给 AI（绕开系统语音识别）----
+        @JavascriptInterface
+        fun startCloudRecording() = main.post { startCloudRec() }
+
+        @JavascriptInterface
+        fun stopCloudRecording() = main.post { recFlag = false }          // 线程收尾后回调 onCloudAudio
+
+        @JavascriptInterface
+        fun cancelCloudRecording() = main.post { recSend = false; recFlag = false }
 
         // ---- 自检：同步返回各子系统状态，方便排查"没反应"----
         @JavascriptInterface
@@ -649,6 +670,83 @@ class MainActivity : AppCompatActivity() {
     private fun firstResult(bundle: Bundle?): String? =
         bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
 
+    // ---------------- 云端识别：录音 → WAV → base64 交给网页发给 AI ----------------
+    @SuppressLint("MissingPermission") // 调用前已用 hasMic() 检查
+    private fun startCloudRec() {
+        if (!hasMic()) {
+            ensureMicPermission()
+            dispatch("onRecordError", "没有麦克风权限，请允许后重试。")
+            return
+        }
+        if (recFlag) return
+        val sampleRate = 16000
+        val minBuf = AudioRecord.getMinBufferSize(
+            sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+        )
+        if (minBuf <= 0) { dispatch("onRecordError", "无法初始化录音。"); return }
+        val recorder = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC, sampleRate,
+                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf * 4
+            )
+        } catch (e: Exception) {
+            dispatch("onRecordError", "录音初始化失败：${e.message ?: ""}"); return
+        }
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
+            dispatch("onRecordError", "麦克风被占用或不可用，请稍后重试。")
+            return
+        }
+        recFlag = true
+        recSend = true
+        dispatch("onRecordStart")
+        recThread = Thread {
+            val pcm = ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            val maxBytes = sampleRate * 2 * 30 // 最长 30 秒，防止无限录
+            try {
+                recorder.startRecording()
+                while (recFlag && pcm.size() < maxBytes) {
+                    val n = recorder.read(buf, 0, buf.size)
+                    if (n > 0) pcm.write(buf, 0, n) else if (n < 0) break
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { recorder.stop() } catch (_: Exception) {}
+                recorder.release()
+            }
+            recFlag = false
+            if (!recSend) { dispatch("onRecordCancel"); return@Thread }
+            if (pcm.size() < sampleRate) { // 不足约 0.5 秒
+                dispatch("onRecordError", "没录到声音，请再试一次。")
+                return@Thread
+            }
+            val b64 = Base64.encodeToString(pcmToWav(pcm.toByteArray(), sampleRate), Base64.NO_WRAP)
+            dispatch("onCloudAudio", b64)
+        }.also { it.start() }
+    }
+
+    // 给 16bit 单声道 PCM 加上标准 44 字节 WAV 头
+    private fun pcmToWav(pcm: ByteArray, sampleRate: Int): ByteArray {
+        val byteRate = sampleRate * 2
+        val total = 36 + pcm.size
+        val out = ByteArrayOutputStream(44 + pcm.size)
+        fun le32(v: Int) = out.write(byteArrayOf(
+            (v and 0xff).toByte(), (v shr 8 and 0xff).toByte(),
+            (v shr 16 and 0xff).toByte(), (v shr 24 and 0xff).toByte()
+        ))
+        fun le16(v: Int) = out.write(byteArrayOf((v and 0xff).toByte(), (v shr 8 and 0xff).toByte()))
+        out.write("RIFF".toByteArray()); le32(total)
+        out.write("WAVE".toByteArray())
+        out.write("fmt ".toByteArray()); le32(16)
+        le16(1); le16(1)          // PCM，单声道
+        le32(sampleRate); le32(byteRate)
+        le16(2); le16(16)         // 块对齐、位深
+        out.write("data".toByteArray()); le32(pcm.size)
+        out.write(pcm)
+        return out.toByteArray()
+    }
+
     // ---------------- 聊天：原生流式请求 ----------------
     private fun runChat(payloadJson: String, seq: Int) {
         fun alive() = seq == chatSeq.get()
@@ -866,6 +964,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        recSend = false
+        recFlag = false
         recognizer?.destroy()
         tts?.shutdown()
         currentConn?.disconnect()

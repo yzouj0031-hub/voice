@@ -17,6 +17,7 @@ const S = {
   apiKey: document.getElementById('s_apiKey'),
   model: document.getElementById('s_model'),
   system: document.getElementById('s_system'),
+  voiceMode: document.getElementById('s_voiceMode'),
   wake: document.getElementById('s_wake'),
   wakeWord: document.getElementById('s_wakeWord'),
 };
@@ -47,6 +48,7 @@ function loadSettings() {
     apiKey: localStorage.getItem('cfg_apiKey') || '',
     model: localStorage.getItem('cfg_model') || '',
     system: localStorage.getItem('cfg_system') || DEFAULT_SYSTEM,
+    voiceMode: localStorage.getItem('cfg_voiceMode') || 'system',
     wake: localStorage.getItem('cfg_wake') === '1',
     wakeWord: localStorage.getItem('cfg_wakeWord') || DEFAULT_WAKE_WORD,
   };
@@ -58,6 +60,7 @@ function openSettings() {
   S.apiKey.value = c.apiKey;
   S.model.value = c.model;
   S.system.value = c.system;
+  S.voiceMode.value = c.voiceMode;
   S.wake.checked = c.wake;
   S.wakeWord.value = c.wakeWord;
   // 每次打开清掉上次的模型列表和测试结果
@@ -74,6 +77,7 @@ function saveSettings() {
   localStorage.setItem('cfg_apiKey', S.apiKey.value.trim());
   localStorage.setItem('cfg_model', S.model.value.trim());
   localStorage.setItem('cfg_system', S.system.value.trim() || DEFAULT_SYSTEM);
+  localStorage.setItem('cfg_voiceMode', S.voiceMode.value);
   localStorage.setItem('cfg_wake', S.wake.checked ? '1' : '0');
   localStorage.setItem('cfg_wakeWord', S.wakeWord.value.trim() || DEFAULT_WAKE_WORD);
   closeSettings();
@@ -175,7 +179,7 @@ diagnoseBtn.addEventListener('click', () => {
   ];
   let tail = '';
   if (!d.recognitionAvailable)
-    tail = '\n→ 这台手机没有可用的语音识别服务，所以“点麦克风没反应”。可以先用下方键盘打字聊天；想用语音，就到系统里安装/启用一个语音识别服务（如安装 Google 应用，或在“设置→语言和输入→语音”里启用）。';
+    tail = '\n→ 这台手机没有可用的语音识别服务。✅ 最简单的解决办法：把上面的「语音输入方式」切换成「☁️ 云端识别」并保存——App 会自己录音发给 AI 听，完全不依赖手机的语音服务（需模型支持听音频，如 Gemini）。也可以用下方键盘打字聊天。';
   else if (!d.mic) tail = '\n→ 请到系统设置里给本应用允许“麦克风”权限。';
   else if (!configured) tail = '\n→ 请先在上面填好接口地址/密钥/模型并保存。';
   else if (!d.ttsReady) tail = '\n→ 朗读引擎还没就绪，可稍等或在系统里安装中文 TTS 语音。';
@@ -240,18 +244,52 @@ window.onAndroidBack = function () {
 };
 
 // ---------- 麦克风 ----------
+let cloudRecording = false; // 云端识别模式：是否正在录音
+
 function startConversation() {
   if (!N) { setStatus('请在语音助手 App 内打开。'); return; }
   N.stopSpeaking();
-  N.startListening();
+  if (loadSettings().voiceMode === 'cloud') {
+    N.startCloudRecording && N.startCloudRecording();
+  } else {
+    N.startListening();
+  }
 }
 
 micBtn.addEventListener('click', () => {
   if (!N) { setStatus('请在语音助手 App 内打开。'); return; }
   if (!isConfigured()) { setStatus('请先在右上角⚙️设置里填写接口。'); openSettings(); return; }
+  if (loadSettings().voiceMode === 'cloud') {
+    // 云端识别：第一下开始录音，第二下停止并发送
+    if (cloudRecording) { N.stopCloudRecording(); return; }
+    startConversation();
+    return;
+  }
   if (listening) { N.stopSpeaking(); N.stopListening(); return; }
   startConversation();
 });
+
+// ---------- 原生回调：云端识别录音 ----------
+window.onRecordStart = function () {
+  cloudRecording = true;
+  micBtn.classList.add('listening');
+  setStatus('正在录音…说完再点一下麦克风发送');
+};
+window.onRecordCancel = function () {
+  cloudRecording = false;
+  micBtn.classList.remove('listening');
+  setStatus('已取消');
+};
+window.onRecordError = function (msg) {
+  cloudRecording = false;
+  micBtn.classList.remove('listening');
+  setStatus(msg || '录音失败');
+};
+window.onCloudAudio = function (b64) {
+  cloudRecording = false;
+  micBtn.classList.remove('listening');
+  sendAudioMessage(b64);
+};
 
 // 键盘输入兜底：语音识别用不了时，打字也能对话，回答照样语音朗读
 function sendTyped() {
@@ -420,10 +458,76 @@ function sendMessage(text) {
   N.chat(JSON.stringify(payload));
 }
 
+// ---------- 云端识别：把录音直接发给 AI，让它"听"完转写并回答 ----------
+let audioTurn = false;        // 本轮是语音音频输入
+let audioUserBubble = null;   // 用户气泡（先显示占位，收到转写后替换）
+let audioTranscript = '';     // 模型转写出的用户原话
+
+function sendAudioMessage(b64) {
+  const c = loadSettings();
+  if (c.provider === 'anthropic') {
+    setStatus('云端识别暂不支持 Anthropic 接口，请换 OpenAI 兼容接口（如 Gemini），或改用系统识别。');
+    return;
+  }
+  audioTurn = true;
+  audioTranscript = '';
+  audioUserBubble = addBubble('user', '🎤 语音消息（识别中…）');
+
+  micBtn.classList.add('thinking');
+  setStatus('识别中…');
+
+  assistantBubble = addBubble('assistant', '');
+  assistantBubble.classList.add('speaking');
+  assistantText = '';
+  assistantRaw = '';
+  speaker = createSentenceSpeaker();
+
+  // 在设备操作说明之外，追加"语音输入"规则：先转写一行，再正常回答
+  const sys =
+    buildSystem(c.system) +
+    '\n\n【语音输入】本条用户消息是一段语音音频。请先把用户说的话逐字转写出来，' +
+    '作为回复的第一行单独输出，格式严格为：【你说：转写内容】。' +
+    '然后从第二行开始，按上面的规则正常回答用户。不要跳过转写行。';
+
+  // 历史里只带文字（音频不重复上传），本轮追加音频消息
+  const req = messages.slice(-19).map((m) => ({ role: m.role, content: m.content }));
+  req.push({
+    role: 'user',
+    content: [{ type: 'input_audio', input_audio: { data: b64, format: 'wav' } }],
+  });
+
+  N.chat(JSON.stringify({
+    provider: c.provider,
+    baseUrl: c.baseUrl,
+    apiKey: c.apiKey,
+    model: c.model,
+    system: sys,
+    messages: req,
+  }));
+}
+
+// 从"【你说：...】\n回答"里拆出转写和正文；标记未完成时先都不显示
+function splitAudioReply(raw) {
+  const m = raw.match(/^\s*【你说：([\s\S]*?)】\s*\n?/);
+  if (m) return { transcript: m[1].trim(), body: raw.slice(m[0].length) };
+  if (/^\s*【[^】]*$/.test(raw)) return { transcript: null, body: '' }; // 标记生成中
+  return { transcript: null, body: raw }; // 模型没按格式来，整段当回答
+}
+
 window.onChatDelta = function (text) {
   if (!assistantBubble) return;
   assistantRaw += text;
-  assistantText = visibleText(assistantRaw); // 隐藏 <action> 指令，只显示/朗读自然语言
+  let shown = assistantRaw;
+  if (audioTurn) {
+    const s = splitAudioReply(assistantRaw);
+    if (s.transcript && !audioTranscript) {
+      audioTranscript = s.transcript;
+      if (audioUserBubble) audioUserBubble.textContent = s.transcript; // 用户气泡换成他说的话
+      setStatus('思考中…');
+    }
+    shown = s.body;
+  }
+  assistantText = visibleText(shown); // 隐藏 <action> 指令，只显示/朗读自然语言
   assistantBubble.textContent = assistantText;
   scrollToBottom();
   speaker && speaker.feed(assistantText);
@@ -447,10 +551,23 @@ function finishChat(isError) {
   micBtn.classList.remove('thinking');
   if (assistantBubble) assistantBubble.classList.remove('speaking');
   if (!isError && speaker) speaker.flush();
+  // 语音输入轮：把"用户说的话"（转写）写进历史，后续轮次就有上下文了
+  if (audioTurn) {
+    if (audioUserBubble && !audioTranscript) audioUserBubble.textContent = '🎤 语音消息';
+    if (!isError) {
+      messages.push({ role: 'user', content: audioTranscript || '（语音消息，内容未转写）' });
+    } else if (audioUserBubble) {
+      audioUserBubble.remove(); // 失败的语音轮不留占位气泡
+    }
+  }
   if (!isError && assistantText.trim()) {
     messages.push({ role: 'assistant', content: assistantText });
     saveHistory();
   }
+  if (audioTurn && !isError) saveHistory();
+  audioTurn = false;
+  audioUserBubble = null;
+  audioTranscript = '';
   // 回复结束后，解析其中的动作指令并交给原生执行（打电话、订闹钟等）
   if (!isError) executeActions(assistantRaw);
   if (!/思考|聆听|识别|出错|保存/.test(statusEl.textContent)) setStatus('点击麦克风开始说话');
