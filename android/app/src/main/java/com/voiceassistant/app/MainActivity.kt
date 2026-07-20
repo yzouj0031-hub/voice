@@ -1,11 +1,14 @@
 package com.voiceassistant.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -13,6 +16,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -34,6 +38,11 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        // 供后台唤醒服务判断：App 在前台时，服务不抢麦克风
+        @Volatile var appInForeground = false
+    }
+
     private lateinit var webView: WebView
     private val main = Handler(Looper.getMainLooper())
     private val net = Executors.newSingleThreadExecutor()
@@ -43,9 +52,11 @@ class MainActivity : AppCompatActivity() {
     private var ttsReady = false
     private val pendingUtterances = AtomicInteger(0)
 
-    // 当前聊天请求的编号，用于让旧请求的结果失效（避免串台）
     private val chatSeq = AtomicInteger(0)
     @Volatile private var currentConn: HttpURLConnection? = null
+
+    private var pageLoaded = false
+    private var pendingWake = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,17 +66,49 @@ class MainActivity : AppCompatActivity() {
 
         webView.settings.apply {
             javaScriptEnabled = true
-            domStorageEnabled = true            // localStorage 存设置
+            domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
         }
         webView.addJavascriptInterface(Bridge(), "Native")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            WebView.setWebContentsDebuggingEnabled(true)
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                pageLoaded = true
+                if (pendingWake) { pendingWake = false; triggerAutoStart() }
+            }
         }
+        WebView.setWebContentsDebuggingEnabled(true)
         webView.loadUrl("file:///android_asset/index.html")
 
         initTts()
         ensureMicPermission()
+        handleWakeIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWakeIntent(intent)
+    }
+
+    private fun handleWakeIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra("wake", false) == true) {
+            if (pageLoaded) triggerAutoStart() else pendingWake = true
+        }
+    }
+
+    // 被唤醒后自动开始一轮对话（稍作延迟，确保唤醒服务已释放麦克风）
+    private fun triggerAutoStart() {
+        main.postDelayed({ dispatch("autoStartConversation") }, 600)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        appInForeground = true
+    }
+
+    override fun onStop() {
+        appInForeground = false
+        super.onStop()
     }
 
     private fun ensureMicPermission() {
@@ -130,9 +173,53 @@ class MainActivity : AppCompatActivity() {
             currentConn?.disconnect()
             net.execute { runChat(payloadJson, seq) }
         }
+
+        // ---- 语音唤醒 ----
+        @JavascriptInterface
+        fun setWakeEnabled(enabled: Boolean, word: String) = main.post {
+            if (enabled) {
+                if (!hasMic()) {   // 没有麦克风权限时先申请，避免前台服务因缺权限崩溃
+                    ensureMicPermission()
+                    dispatch("onSpeechError", "请先允许麦克风权限，再开启语音唤醒。")
+                    return@post
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED
+                ) {
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2
+                    )
+                }
+                val i = Intent(this@MainActivity, WakeService::class.java).apply {
+                    action = WakeService.ACTION_START
+                    putExtra(WakeService.EXTRA_WORD, word)
+                }
+                ContextCompat.startForegroundService(this@MainActivity, i)
+            } else {
+                val i = Intent(this@MainActivity, WakeService::class.java).apply {
+                    action = WakeService.ACTION_STOP
+                }
+                ContextCompat.startForegroundService(this@MainActivity, i)
+            }
+        }
+
+        @JavascriptInterface
+        fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(this@MainActivity)
+
+        @JavascriptInterface
+        fun openOverlaySettings() = main.post {
+            val i = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            try { startActivity(i) } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+            }
+        }
     }
 
-    // ---------------- 语音识别 ----------------
+    // ---------------- 语音识别（对话） ----------------
     private fun startRecognition() {
         if (!hasMic()) {
             ensureMicPermission()
@@ -178,7 +265,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
         }
-        val intent = android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
@@ -186,10 +273,8 @@ class MainActivity : AppCompatActivity() {
         recognizer?.startListening(intent)
     }
 
-    private fun firstResult(bundle: Bundle?): String? {
-        val list = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        return list?.firstOrNull()
-    }
+    private fun firstResult(bundle: Bundle?): String? =
+        bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
 
     // ---------------- 聊天：原生流式请求 ----------------
     private fun runChat(payloadJson: String, seq: Int) {
@@ -291,16 +376,12 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------- 调用网页里的回调 ----------------
     private fun dispatch(func: String, arg: String? = null) {
-        val call = if (arg == null) {
-            "window.$func && window.$func();"
-        } else {
-            "window.$func && window.$func(${JSONObject.quote(arg)});"
-        }
+        val call = if (arg == null) "window.$func && window.$func();"
+        else "window.$func && window.$func(${JSONObject.quote(arg)});"
         main.post { webView.evaluateJavascript(call, null) }
     }
 
     override fun onBackPressed() {
-        // 让网页有机会先关闭“设置”弹窗
         webView.evaluateJavascript("window.onAndroidBack ? window.onAndroidBack() : false") { result ->
             if (result != "true") super.onBackPressed()
         }

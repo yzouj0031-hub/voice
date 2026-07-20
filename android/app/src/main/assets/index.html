@@ -51,6 +51,22 @@
       <label>人设 / 系统提示词
         <textarea id="s_system" rows="3"></textarea>
       </label>
+
+      <div class="switch-row">
+        <div>
+          <div class="switch-title">语音唤醒（喊一声就出现）</div>
+          <div class="switch-sub">开启后即使退出 App，喊唤醒词也会自动弹出并开始聊天</div>
+        </div>
+        <label class="switch">
+          <input id="s_wake" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <label>唤醒词
+        <input id="s_wakeWord" type="text" placeholder="你好助手" autocomplete="off" autocapitalize="off" spellcheck="false" />
+      </label>
+      <p class="tip">⚠️ 语音唤醒需要“持续监听”，比较耗电、可能用到流量，建议在系统里给本应用装/开启离线中文语音包。首次开启会引导你授予“显示在其他应用上层”权限（否则喊了只弹通知、不会跳出来）。</p>
+
       <p class="tip">常见填法：DeepSeek → 地址 https://api.deepseek.com/v1，模型 deepseek-chat；Kimi → https://api.moonshot.cn/v1，moonshot-v1-8k；Claude → 接口类型选 Anthropic，地址 https://api.anthropic.com，模型 claude-haiku-4-5。</p>
       <div class="sheet-actions">
         <button id="s_cancel" class="btn ghost">取消</button>

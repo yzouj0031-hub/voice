@@ -17,6 +17,8 @@ const S = {
   apiKey: document.getElementById('s_apiKey'),
   model: document.getElementById('s_model'),
   system: document.getElementById('s_system'),
+  wake: document.getElementById('s_wake'),
+  wakeWord: document.getElementById('s_wakeWord'),
 };
 
 let messages = loadHistory();
@@ -27,6 +29,7 @@ let assistantText = '';
 
 // ---------- 设置 ----------
 const DEFAULT_SYSTEM = '你是一个友好、简洁的中文语音助手。回答要口语化、自然，适合朗读出来，不要用 Markdown 符号、列表或表格，尽量简短。';
+const DEFAULT_WAKE_WORD = '你好助手';
 
 function loadSettings() {
   return {
@@ -35,6 +38,8 @@ function loadSettings() {
     apiKey: localStorage.getItem('cfg_apiKey') || '',
     model: localStorage.getItem('cfg_model') || '',
     system: localStorage.getItem('cfg_system') || DEFAULT_SYSTEM,
+    wake: localStorage.getItem('cfg_wake') === '1',
+    wakeWord: localStorage.getItem('cfg_wakeWord') || DEFAULT_WAKE_WORD,
   };
 }
 function openSettings() {
@@ -44,6 +49,8 @@ function openSettings() {
   S.apiKey.value = c.apiKey;
   S.model.value = c.model;
   S.system.value = c.system;
+  S.wake.checked = c.wake;
+  S.wakeWord.value = c.wakeWord;
   modal.classList.remove('hidden');
 }
 function closeSettings() { modal.classList.add('hidden'); }
@@ -53,9 +60,34 @@ function saveSettings() {
   localStorage.setItem('cfg_apiKey', S.apiKey.value.trim());
   localStorage.setItem('cfg_model', S.model.value.trim());
   localStorage.setItem('cfg_system', S.system.value.trim() || DEFAULT_SYSTEM);
+  localStorage.setItem('cfg_wake', S.wake.checked ? '1' : '0');
+  localStorage.setItem('cfg_wakeWord', S.wakeWord.value.trim() || DEFAULT_WAKE_WORD);
   closeSettings();
+  applyWake();
   setStatus('设置已保存，点击麦克风说话吧');
 }
+
+// 根据设置开启/关闭后台语音唤醒
+function applyWake() {
+  if (!N || !N.setWakeEnabled) return;
+  const c = loadSettings();
+  if (c.wake) {
+    // 需要“显示在其他应用上层”权限，否则被唤醒时无法弹出界面
+    if (N.canDrawOverlays && !N.canDrawOverlays()) {
+      setStatus('请授予“显示在其他应用上层”权限后返回');
+      if (N.openOverlaySettings) N.openOverlaySettings();
+    }
+    N.setWakeEnabled(true, c.wakeWord);
+  } else {
+    N.setWakeEnabled(false, '');
+  }
+}
+
+// 被唤醒后自动开始一轮对话（原生在弹出界面后调用）
+window.autoStartConversation = function () {
+  if (!isConfigured()) { openSettings(); return; }
+  if (!listening) startConversation();
+};
 function isConfigured() {
   const c = loadSettings();
   return c.baseUrl && c.apiKey && c.model;
@@ -73,12 +105,17 @@ window.onAndroidBack = function () {
 };
 
 // ---------- 麦克风 ----------
+function startConversation() {
+  if (!N) { setStatus('请在语音助手 App 内打开。'); return; }
+  N.stopSpeaking();
+  N.startListening();
+}
+
 micBtn.addEventListener('click', () => {
   if (!N) { setStatus('请在语音助手 App 内打开。'); return; }
   if (!isConfigured()) { setStatus('请先在右上角⚙️设置里填写接口。'); openSettings(); return; }
-  N.stopSpeaking();
-  if (listening) { N.stopListening(); return; }
-  N.startListening();
+  if (listening) { N.stopSpeaking(); N.stopListening(); return; }
+  startConversation();
 });
 
 clearBtn.addEventListener('click', () => {
@@ -247,4 +284,5 @@ function saveHistory() {
     setStatus('首次使用：点右上角 ⚙️ 填写接口');
     openSettings();
   }
+  applyWake(); // 同步后台唤醒状态
 })();
