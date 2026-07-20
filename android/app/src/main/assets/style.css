@@ -30,6 +30,8 @@ body { display: flex; flex-direction: column; height: 100dvh; }
 .msg.user { align-self: flex-end; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-bottom-right-radius: 6px; }
 .msg.assistant { align-self: flex-start; background: var(--assistant); border-bottom-left-radius: 6px; }
 .msg.assistant.speaking { box-shadow: 0 0 0 2px rgba(91,140,255,.5); }
+/* 设备操作结果（如“已设闹钟 07:30”），居中的浅色小气泡 */
+.msg.system { align-self: center; max-width: 90%; background: rgba(255,255,255,.06); color: var(--muted); font-size: 13px; padding: 7px 14px; border-radius: 999px; text-align: center; }
 .hint { align-self: center; color: var(--muted); font-size: 14px; text-align: center; max-width: 80%; margin-top: 24px; line-height: 1.6; }
 
 .dock { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0 22px; }
