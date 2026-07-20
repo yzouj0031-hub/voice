@@ -1,10 +1,55 @@
 # 🎙️ 语音助手（像 Siri 一样）
 
 一个手机上用的语音聊天助手：**说话 → 识别成文字 → 发给 AI → 流式回复 → 用语音读出来**。
+兼容**所有 AI 接口**：OpenAI、DeepSeek、Kimi、智谱、本地大模型（Ollama / LM Studio）、各种中转，以及原生 Claude。
+
+提供两种形态：
+
+| 形态 | 适合谁 | 怎么用 |
+| --- | --- | --- |
+| **📱 安卓 App（推荐）** | 想"下载装上就能用" | 下载 APK 安装，打开填接口即可，无需电脑 |
+| 网页服务器版 | 会跑 Node 服务的人 | 电脑跑后端，手机浏览器访问 |
+
+---
+
+## 📱 安卓 App（无需电脑，装上就用）
+
+这是一个真正的安卓应用：界面用网页做，**语音识别、语音朗读、联网请求全部用安卓原生能力**，
+所以不像普通网页壳那样识别不了语音；直连接口也不受跨域限制。密钥填在 App 的"设置"里、只存在手机本地。
+
+### 拿到 APK
+本仓库配了自动打包（GitHub Actions）。每次改动 `android/` 后会在云端编译，产物在两个地方：
+1. 仓库 **Releases** → `apk-latest` → 下载 `app-debug.apk`（最方便）
+2. 或 **Actions** 里对应那次运行的 Artifacts
+
+> 想自己在电脑上打包：装好 Android Studio，用它打开 `android/` 目录，`Build → Build APK`；
+> 或命令行 `cd android && ./gradlew assembleDebug`，产物在 `android/app/build/outputs/apk/debug/`。
+
+### 安装并使用
+1. 手机下载 `app-debug.apk`，点开安装。第一次会提示"允许安装未知来源应用"，允许即可。
+2. 打开"语音助手"，第一次会让你允许**麦克风**权限。
+3. 点右上角 **⚙️** 填：接口类型 / 接口地址 / API 密钥 / 模型名（填法见 App 里的提示或下面的表）。
+4. 点麦克风说话，它就会用语音回答你。
+
+### 常见接口填法
+| 接口 | 接口类型 | 地址 | 模型 |
+| --- | --- | --- | --- |
+| DeepSeek | OpenAI 兼容 | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| Kimi | OpenAI 兼容 | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
+| 智谱 | OpenAI 兼容 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
+| OpenAI | OpenAI 兼容 | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| Claude | Anthropic | `https://api.anthropic.com` | `claude-haiku-4-5` |
+
+> 需要**安卓 6.0 以上**，并且手机装了可用的语音识别服务（多数国行/海外机自带；若提示无识别服务，装一个 Google 应用或系统语音服务即可）。
+
+---
+
+## 💻 网页服务器版（另一种方式）
+
+如果你更想在电脑上跑一个服务、手机用浏览器访问，用这套：
 - 语音识别用浏览器自带的 Web Speech API（**安卓 Chrome 效果最好**）
 - 后端把你的 API Key 藏在服务器端，手机浏览器拿不到，安全
-- 兼容**所有 AI 接口**：OpenAI、DeepSeek、Kimi、智谱、本地大模型（Ollama / LM Studio）、各种中转，以及原生 Claude
-- 是一个 PWA，可以"添加到主屏幕"，用起来跟 App 一样
+- 是一个 PWA，可以"添加到主屏幕"
 
 ---
 
