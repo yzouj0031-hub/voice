@@ -595,15 +595,24 @@ class MainActivity : AppCompatActivity() {
                 override fun onError(error: Int) {
                     markRecogAlive()
                     dispatch("onSpeechEnd")
+                    // 每一种错误都给出提示（含错误码），不再静默，方便定位"点了没反应"
                     val msg = when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH,
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没听清，请再点一次麦克风。"
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "没有麦克风权限。"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没听清，请再点一次麦克风说话。"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "没有麦克风权限，请在系统设置里允许。"
                         SpeechRecognizer.ERROR_NETWORK,
-                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "语音识别需要联网，请检查网络。"
-                        else -> null
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                            "语音识别联网失败（错误码 $error）。系统识别多要连 Google 服务器，若在国内且没给识别服务全局代理就会失败；可在系统里装“离线中文语音包”后重试，或先用下方打字。"
+                        SpeechRecognizer.ERROR_SERVER,
+                        SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
+                            "语音识别服务器出错（错误码 $error），多为联网/代理问题。建议装离线中文语音包，或先用下方打字。"
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别服务正忙（错误码 8），请等一两秒再点一次。"
+                        SpeechRecognizer.ERROR_CLIENT ->
+                            "识别服务启动失败（错误码 5），可能系统识别服务不兼容。建议装离线中文语音包，或先用下方打字。"
+                        SpeechRecognizer.ERROR_AUDIO -> "录音出错（错误码 3），麦克风可能被其它应用占用。"
+                        else -> "语音识别出错（错误码 $error）。可尝试装离线中文语音包，或先用下方打字。"
                     }
-                    if (msg != null) dispatch("onSpeechError", msg)
+                    dispatch("onSpeechError", msg)
                 }
 
                 override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -623,7 +632,7 @@ class MainActivity : AppCompatActivity() {
                 dispatch("onSpeechEnd")
                 dispatch(
                     "onSpeechError",
-                    "语音识别没有响应，可能这台手机缺少可用的语音识别服务。可到系统设置里安装/启用语音服务，或直接用下方键盘打字。"
+                    "语音识别迟迟没有响应（可能识别服务卡住或联网失败）。可在系统里装“离线中文语音包”后重试，或直接用下方键盘打字。"
                 )
             }
         }
