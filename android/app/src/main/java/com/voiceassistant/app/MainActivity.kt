@@ -1,6 +1,8 @@
 package com.voiceassistant.app
 
 import android.Manifest
+import android.app.SearchManager
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -8,6 +10,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.provider.ContactsContract
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -26,6 +31,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -41,7 +47,16 @@ class MainActivity : AppCompatActivity() {
     companion object {
         // 供后台唤醒服务判断：App 在前台时，服务不抢麦克风
         @Volatile var appInForeground = false
+
+        // 权限请求码
+        private const val REQ_MIC = 1
+        private const val REQ_NOTIF = 2
+        private const val REQ_CONTACTS = 3
+        private const val REQ_CALL = 4
     }
+
+    // 因缺权限（如读取通讯录）而挂起的动作，授予后自动重试
+    @Volatile private var pendingAction: JSONObject? = null
 
     private lateinit var webView: WebView
     private val main = Handler(Looper.getMainLooper())
@@ -115,7 +130,7 @@ class MainActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
         }
     }
 
@@ -188,7 +203,7 @@ class MainActivity : AppCompatActivity() {
                     != PackageManager.PERMISSION_GRANTED
                 ) {
                     ActivityCompat.requestPermissions(
-                        this@MainActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2
+                        this@MainActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF
                     )
                 }
                 val i = Intent(this@MainActivity, WakeService::class.java).apply {
@@ -217,6 +232,237 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
             }
         }
+
+        // ---- 助手动作：打电话 / 闹钟 / 定时器 / 短信 / 开应用 / 导航 / 搜索 / 日历 ----
+        // 网页把 AI 解析出的动作数组（JSON）发过来，这里逐个用安卓原生能力执行。
+        @JavascriptInterface
+        fun performActions(json: String) = main.post { runActions(json) }
+    }
+
+    private fun runActions(json: String) {
+        val arr = try { JSONArray(json) } catch (_: Exception) { return }
+        for (i in 0 until arr.length()) {
+            val a = arr.optJSONObject(i) ?: continue
+            try {
+                when (a.optString("tool")) {
+                    "call" -> doCall(a)
+                    "set_alarm" -> doSetAlarm(a)
+                    "set_timer" -> doSetTimer(a)
+                    "send_sms" -> doSendSms(a)
+                    "open_app" -> doOpenApp(a)
+                    "navigate" -> doNavigate(a)
+                    "search_web" -> doSearchWeb(a)
+                    "add_calendar" -> doAddCalendar(a)
+                    else -> {}
+                }
+            } catch (e: Exception) {
+                actionResult("这个操作没能完成：${e.message ?: "未知错误"}", true)
+            }
+        }
+    }
+
+    // 把动作结果回传给网页（显示为系统气泡；speak=true 时还会朗读出来，用于失败或需要用户注意的情况）
+    private fun actionResult(msg: String, speak: Boolean) {
+        val obj = JSONObject().put("msg", msg).put("speak", speak)
+        dispatch("onActionResult", obj.toString())
+    }
+
+    private fun tryStart(intent: Intent, okMsg: String, speakOk: Boolean, failMsg: String) {
+        try {
+            startActivity(intent)
+            actionResult(okMsg, speakOk)
+        } catch (_: ActivityNotFoundException) {
+            actionResult(failMsg, true)
+        } catch (e: Exception) {
+            actionResult("${failMsg}（${e.message}）", true)
+        }
+    }
+
+    // ---- 打电话 ----
+    // 有 CALL_PHONE 权限就直接拨；没有就打开拨号盘并预填号码，用户点一下即可拨出。
+    private fun doCall(a: JSONObject) {
+        var number = a.optString("number").trim()
+        val name = a.optString("name").trim()
+        if (number.isEmpty() && name.isNotEmpty()) {
+            val looked = lookupContactNumber(name)
+            if (looked == null) {
+                // lookupContactNumber 在缺少权限时会申请权限并返回 null，这里给出提示
+                if (hasContacts()) actionResult("通讯录里没找到“$name”。", true)
+                else {
+                    pendingAction = a
+                    actionResult("请允许读取通讯录后，再说一次要打给谁。", true)
+                }
+                return
+            }
+            number = looked
+        }
+        if (number.isEmpty()) { actionResult("不知道要打给谁呢。", true); return }
+        val label = if (name.isNotEmpty()) name else number
+        val uri = Uri.parse("tel:" + Uri.encode(number))
+        if (hasCallPhone()) {
+            tryStart(Intent(Intent.ACTION_CALL, uri), "正在拨打 $label", false, "拨号失败。")
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CALL_PHONE), REQ_CALL)
+            // 没权限时先用拨号盘兜底，用户点绿色按钮即可拨出
+            tryStart(Intent(Intent.ACTION_DIAL, uri), "已为你拨号 $label，点绿色按钮拨出。", true, "无法打开拨号盘。")
+        }
+    }
+
+    // ---- 闹钟 ----
+    private fun doSetAlarm(a: JSONObject) {
+        val hour = a.optInt("hour", -1)
+        val minute = a.optInt("minute", 0)
+        if (hour !in 0..23 || minute !in 0..59) { actionResult("闹钟时间没听清。", true); return }
+        val i = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(AlarmClock.EXTRA_HOUR, hour)
+            putExtra(AlarmClock.EXTRA_MINUTES, minute)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            val msg = a.optString("message")
+            if (msg.isNotEmpty()) putExtra(AlarmClock.EXTRA_MESSAGE, msg)
+        }
+        tryStart(i, "已设闹钟 %02d:%02d".format(hour, minute), false, "手机上没有可用的闹钟应用。")
+    }
+
+    // ---- 定时器 ----
+    private fun doSetTimer(a: JSONObject) {
+        val seconds = a.optInt("seconds", 0)
+        if (seconds <= 0) { actionResult("定时时长没听清。", true); return }
+        val i = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+            putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+            putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            val msg = a.optString("message")
+            if (msg.isNotEmpty()) putExtra(AlarmClock.EXTRA_MESSAGE, msg)
+        }
+        val mm = seconds / 60
+        val ss = seconds % 60
+        val human = if (mm > 0) "${mm}分${if (ss > 0) "${ss}秒" else ""}" else "${ss}秒"
+        tryStart(i, "已设 $human 定时器", false, "手机上没有可用的定时器应用。")
+    }
+
+    // ---- 发短信（打开短信应用并预填，用户确认后发送，更安全）----
+    private fun doSendSms(a: JSONObject) {
+        var number = a.optString("number").trim()
+        val name = a.optString("name").trim()
+        if (number.isEmpty() && name.isNotEmpty()) {
+            val looked = lookupContactNumber(name)
+            if (looked == null) {
+                if (hasContacts()) actionResult("通讯录里没找到“$name”。", true)
+                else { pendingAction = a; actionResult("请允许读取通讯录后，再说一次。", true) }
+                return
+            }
+            number = looked
+        }
+        if (number.isEmpty()) { actionResult("不知道要发给谁呢。", true); return }
+        val label = if (name.isNotEmpty()) name else number
+        val i = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).apply {
+            val body = a.optString("body")
+            if (body.isNotEmpty()) putExtra("sms_body", body)
+        }
+        tryStart(i, "已写好给 $label 的短信，确认后发送。", true, "无法打开短信应用。")
+    }
+
+    // ---- 打开应用（按名字匹配已安装应用）----
+    private fun doOpenApp(a: JSONObject) {
+        val appName = a.optString("app").trim()
+        if (appName.isEmpty()) { actionResult("要打开哪个应用呢？", true); return }
+        val pkg = findPackageByLabel(appName)
+        if (pkg == null) { actionResult("没找到应用“$appName”。", true); return }
+        val launch = packageManager.getLaunchIntentForPackage(pkg)
+        if (launch == null) { actionResult("“$appName”无法打开。", true); return }
+        tryStart(launch, "正在打开 $appName", false, "“$appName”无法打开。")
+    }
+
+    // ---- 导航 / 地图 ----
+    private fun doNavigate(a: JSONObject) {
+        val dest = a.optString("destination").trim()
+        if (dest.isEmpty()) { actionResult("要去哪里呢？", true); return }
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(dest)))
+        tryStart(i, "正在打开地图：$dest", false, "手机上没有可用的地图应用。")
+    }
+
+    // ---- 网页搜索 ----
+    private fun doSearchWeb(a: JSONObject) {
+        val q = a.optString("query").trim()
+        if (q.isEmpty()) { actionResult("要搜什么呢？", true); return }
+        val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, q)
+        try {
+            startActivity(search)
+            actionResult("正在搜索：$q", false)
+        } catch (_: Exception) {
+            // 兜底：直接用浏览器打开搜索结果页
+            val url = "https://www.bing.com/search?q=" + Uri.encode(q)
+            tryStart(Intent(Intent.ACTION_VIEW, Uri.parse(url)), "正在搜索：$q", false, "无法打开浏览器。")
+        }
+    }
+
+    // ---- 加日历（打开日历新建事件，用户确认保存）----
+    private fun doAddCalendar(a: JSONObject) {
+        val title = a.optString("title").trim()
+        if (title.isEmpty()) { actionResult("这个日程叫什么呢？", true); return }
+        val i = Intent(Intent.ACTION_INSERT)
+            .setData(CalendarContract.Events.CONTENT_URI)
+            .putExtra(CalendarContract.Events.TITLE, title)
+        val hour = a.optInt("hour", -1)
+        if (hour in 0..23) {
+            val cal = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, hour)
+                set(Calendar.MINUTE, a.optInt("minute", 0))
+                set(Calendar.SECOND, 0)
+                // 若时间已过则顺延到明天
+                if (before(Calendar.getInstance())) add(Calendar.DAY_OF_MONTH, 1)
+            }
+            i.putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, cal.timeInMillis)
+            i.putExtra(CalendarContract.EXTRA_EVENT_END_TIME, cal.timeInMillis + 60 * 60 * 1000)
+        }
+        tryStart(i, "已为你新建日程“$title”，确认后保存。", true, "手机上没有可用的日历应用。")
+    }
+
+    // ---- 联系人查询 ----
+    private fun hasContacts() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun hasCallPhone() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) ==
+            PackageManager.PERMISSION_GRANTED
+
+    // 按姓名（模糊）查联系人号码；无权限时申请权限并返回 null
+    private fun lookupContactNumber(name: String): String? {
+        if (!hasContacts()) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_CONTACTS), REQ_CONTACTS)
+            return null
+        }
+        val proj = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.NUMBER,
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+        )
+        // 先精确匹配，取不到再模糊匹配
+        for (selectionName in listOf(name, "%$name%")) {
+            val sel = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI, proj, sel, arrayOf(selectionName), null
+            )?.use { c ->
+                if (c.moveToFirst()) return c.getString(0)?.replace(" ", "")
+            }
+        }
+        return null
+    }
+
+    // 按应用名（先精确后模糊）在已安装应用中找包名
+    private fun findPackageByLabel(label: String): String? {
+        val pm = packageManager
+        val apps = pm.getInstalledApplications(0)
+        var fuzzy: String? = null
+        for (app in apps) {
+            val appLabel = pm.getApplicationLabel(app).toString()
+            if (appLabel.equals(label, ignoreCase = true)) return app.packageName
+            if (fuzzy == null && pm.getLaunchIntentForPackage(app.packageName) != null &&
+                appLabel.contains(label, ignoreCase = true)
+            ) {
+                fuzzy = app.packageName
+            }
+        }
+        return fuzzy
     }
 
     // ---------------- 语音识别（对话） ----------------
@@ -379,6 +625,21 @@ class MainActivity : AppCompatActivity() {
         val call = if (arg == null) "window.$func && window.$func();"
         else "window.$func && window.$func(${JSONObject.quote(arg)});"
         main.post { webView.evaluateJavascript(call, null) }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val granted = grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        // 授予通讯录/电话权限后，自动把之前挂起的动作再执行一次
+        if (granted && (requestCode == REQ_CONTACTS || requestCode == REQ_CALL)) {
+            pendingAction?.let { a ->
+                pendingAction = null
+                main.post { runActions(JSONArray().put(a).toString()) }
+            }
+        }
     }
 
     override fun onBackPressed() {

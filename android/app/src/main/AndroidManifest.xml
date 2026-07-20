@@ -9,14 +9,58 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 从后台把界面弹到最前面所需（“显示在其他应用上层”） -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 助手动作：打电话（直接拨号）、按联系人姓名找号码 -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- 按名字打开手机上的其它应用（枚举已安装应用） -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
-    <!-- 语音识别 / 合成服务查询 -->
+    <!-- 语音识别 / 合成服务，以及助手动作用到的系统应用（Android 11+ 需声明可见性） -->
     <queries>
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- 拨号 / 打电话 -->
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CALL" />
+            <data android:scheme="tel" />
+        </intent>
+        <!-- 发短信 -->
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+        <!-- 闹钟 / 定时器 -->
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+        <!-- 地图导航 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <!-- 浏览器 / 网页搜索 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.WEB_SEARCH" />
+        </intent>
+        <!-- 日历新建事件 -->
+        <intent>
+            <action android:name="android.intent.action.INSERT" />
+            <data android:mimeType="vnd.android.cursor.dir/event" />
         </intent>
     </queries>
 

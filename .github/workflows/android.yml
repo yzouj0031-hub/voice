@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - claude/voice-chat-assistant-api-wsp7sk
+      - claude/repository-connection-x22jt2
     paths:
       - 'android/**'
       - '.github/workflows/android.yml'
