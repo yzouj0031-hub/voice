@@ -66,6 +66,9 @@ class MainActivity : AppCompatActivity() {
     private val net = Executors.newSingleThreadExecutor()
 
     private var recognizer: SpeechRecognizer? = null
+    // 识别看门狗：开始听后若迟迟没有任何回调，说明系统识别服务不工作，超时给出提示而不是干等
+    @Volatile private var recogCallbackFired = false
+    private var recogTimeout: Runnable? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private val pendingUtterances = AtomicInteger(0)
@@ -254,6 +257,14 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun testConnection(payloadJson: String) = net.execute { runTest(payloadJson) }
+
+        // ---- 自检：同步返回各子系统状态，方便排查"没反应"----
+        @JavascriptInterface
+        fun diagnostics(): String = JSONObject().apply {
+            put("mic", hasMic())
+            put("recognitionAvailable", SpeechRecognizer.isRecognitionAvailable(this@MainActivity))
+            put("ttsReady", ttsReady)
+        }.toString()
     }
 
     private fun runActions(json: String) {
@@ -563,23 +574,26 @@ class MainActivity : AppCompatActivity() {
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) = dispatch("onSpeechStart")
-                override fun onBeginningOfSpeech() {}
+                override fun onReadyForSpeech(params: Bundle?) { markRecogAlive(); dispatch("onSpeechStart") }
+                override fun onBeginningOfSpeech() { markRecogAlive() }
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
+                override fun onEndOfSpeech() { markRecogAlive() }
 
                 override fun onPartialResults(partial: Bundle?) {
+                    markRecogAlive()
                     firstResult(partial)?.let { dispatch("onSpeechPartial", it) }
                 }
 
                 override fun onResults(results: Bundle?) {
+                    markRecogAlive()
                     val text = firstResult(results) ?: ""
                     dispatch("onSpeechResult", text)
                     dispatch("onSpeechEnd")
                 }
 
                 override fun onError(error: Int) {
+                    markRecogAlive()
                     dispatch("onSpeechEnd")
                     val msg = when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH,
@@ -600,7 +614,27 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
+        // 启动看门狗：2.5 秒内若识别服务无任何回调，说明它没在工作，明确提示而不是干等
+        recogCallbackFired = false
+        recogTimeout?.let { main.removeCallbacks(it) }
+        recogTimeout = Runnable {
+            if (!recogCallbackFired) {
+                recognizer?.cancel()
+                dispatch("onSpeechEnd")
+                dispatch(
+                    "onSpeechError",
+                    "语音识别没有响应，可能这台手机缺少可用的语音识别服务。可到系统设置里安装/启用语音服务，或直接用下方键盘打字。"
+                )
+            }
+        }
+        main.postDelayed(recogTimeout!!, 2500)
         recognizer?.startListening(intent)
+    }
+
+    // 收到识别服务的任意回调即视为"它还活着"，撤销看门狗
+    private fun markRecogAlive() {
+        recogCallbackFired = true
+        recogTimeout?.let { main.removeCallbacks(it) }
     }
 
     private fun firstResult(bundle: Bundle?): String? =

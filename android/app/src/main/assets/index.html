@@ -27,6 +27,10 @@
       </svg>
     </button>
     <button id="stopSpeakBtn" class="stop-speak hidden" aria-label="停止朗读">⏹ 停止朗读</button>
+    <div class="type-row">
+      <input id="textInput" type="text" placeholder="不方便说话？在这里打字，回车发送…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" />
+      <button id="sendTextBtn" class="send-btn" aria-label="发送">发送</button>
+    </div>
   </section>
 
   <!-- 设置弹窗 -->
@@ -52,6 +56,7 @@
       <div class="mini-actions">
         <button id="s_fetchModels" type="button" class="btn-mini">↧ 拉取模型</button>
         <button id="s_testConn" type="button" class="btn-mini">✓ 测试连接</button>
+        <button id="s_diagnose" type="button" class="btn-mini">🔍 自检</button>
       </div>
       <div id="s_modelChips" class="chips hidden"></div>
       <p id="s_testResult" class="test-result hidden"></p>

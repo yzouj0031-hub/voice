@@ -22,9 +22,12 @@ const S = {
 };
 const fetchModelsBtn = document.getElementById('s_fetchModels');
 const testConnBtn = document.getElementById('s_testConn');
+const diagnoseBtn = document.getElementById('s_diagnose');
 const modelList = document.getElementById('modelList');
 const modelChips = document.getElementById('s_modelChips');
 const testResult = document.getElementById('s_testResult');
+const textInput = document.getElementById('textInput');
+const sendTextBtn = document.getElementById('sendTextBtn');
 
 let messages = loadHistory();
 let listening = false;
@@ -144,6 +147,30 @@ testConnBtn.addEventListener('click', () => {
   N.testConnection(JSON.stringify(c));
 });
 
+// 自检：一眼看清麦克风 / 语音识别 / 朗读 / 接口 哪个是好的
+diagnoseBtn.addEventListener('click', () => {
+  if (!N || !N.diagnostics) { showTestResult('请在语音助手 App 内使用自检。', 'err'); return; }
+  let d;
+  try { d = JSON.parse(N.diagnostics()); } catch { d = {}; }
+  const c = currentInput();
+  const configured = !!(c.baseUrl && c.apiKey && c.model);
+  const yn = (b) => (b ? '✓ 正常' : '✗ 不可用');
+  const lines = [
+    '麦克风权限：' + yn(d.mic),
+    '语音识别服务：' + yn(d.recognitionAvailable),
+    '朗读引擎：' + yn(d.ttsReady),
+    '接口已填写：' + yn(configured),
+  ];
+  let tail = '';
+  if (!d.recognitionAvailable)
+    tail = '\n→ 这台手机没有可用的语音识别服务，所以“点麦克风没反应”。可以先用下方键盘打字聊天；想用语音，就到系统里安装/启用一个语音识别服务（如安装 Google 应用，或在“设置→语言和输入→语音”里启用）。';
+  else if (!d.mic) tail = '\n→ 请到系统设置里给本应用允许“麦克风”权限。';
+  else if (!configured) tail = '\n→ 请先在上面填好接口地址/密钥/模型并保存。';
+  else if (!d.ttsReady) tail = '\n→ 朗读引擎还没就绪，可稍等或在系统里安装中文 TTS 语音。';
+  const allOk = d.mic && d.recognitionAvailable && d.ttsReady && configured;
+  showTestResult(lines.join('\n') + tail, allOk ? 'ok' : 'err');
+});
+
 // 原生回调：拉到的模型列表（字符串数组）
 window.onModelsResult = function (payload) {
   fetchModelsBtn.disabled = false;
@@ -212,6 +239,21 @@ micBtn.addEventListener('click', () => {
   if (!isConfigured()) { setStatus('请先在右上角⚙️设置里填写接口。'); openSettings(); return; }
   if (listening) { N.stopSpeaking(); N.stopListening(); return; }
   startConversation();
+});
+
+// 键盘输入兜底：语音识别用不了时，打字也能对话，回答照样语音朗读
+function sendTyped() {
+  const t = textInput.value.trim();
+  if (!t) return;
+  if (!N) { setStatus('请在语音助手 App 内打开。'); return; }
+  if (!isConfigured()) { setStatus('请先在右上角⚙️设置里填写接口。'); openSettings(); return; }
+  N.stopSpeaking && N.stopSpeaking();
+  textInput.value = '';
+  sendMessage(t);
+}
+sendTextBtn.addEventListener('click', sendTyped);
+textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); sendTyped(); }
 });
 
 clearBtn.addEventListener('click', () => {

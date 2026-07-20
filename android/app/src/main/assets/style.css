@@ -45,6 +45,10 @@ body { display: flex; flex-direction: column; height: 100dvh; }
 .mic.thinking { opacity: .7; }
 @keyframes ripple { 0% { opacity: .7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.8); } }
 .stop-speak { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); color: var(--text); padding: 8px 16px; border-radius: 999px; font-size: 14px; }
+/* 键盘输入兜底行 */
+.type-row { display: flex; gap: 8px; width: 100%; max-width: 520px; padding: 0 16px; }
+.type-row input { flex: 1; min-width: 0; background: #0b1020; border: 1px solid rgba(255,255,255,.15); color: var(--text); border-radius: 999px; padding: 11px 16px; font-size: 15px; font-family: inherit; }
+.send-btn { flex: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border: none; border-radius: 999px; padding: 0 18px; font-size: 15px; font-weight: 600; }
 .hidden { display: none !important; }
 
 /* 设置弹窗 */
