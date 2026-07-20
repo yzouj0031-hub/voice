@@ -20,6 +20,14 @@ const S = {
   wake: document.getElementById('s_wake'),
   wakeWord: document.getElementById('s_wakeWord'),
 };
+const fetchModelsBtn = document.getElementById('s_fetchModels');
+const testConnBtn = document.getElementById('s_testConn');
+const diagnoseBtn = document.getElementById('s_diagnose');
+const modelList = document.getElementById('modelList');
+const modelChips = document.getElementById('s_modelChips');
+const testResult = document.getElementById('s_testResult');
+const textInput = document.getElementById('textInput');
+const sendTextBtn = document.getElementById('sendTextBtn');
 
 let messages = loadHistory();
 let listening = false;
@@ -52,6 +60,11 @@ function openSettings() {
   S.system.value = c.system;
   S.wake.checked = c.wake;
   S.wakeWord.value = c.wakeWord;
+  // 每次打开清掉上次的模型列表和测试结果
+  modelChips.classList.add('hidden');
+  modelChips.innerHTML = '';
+  testResult.classList.add('hidden');
+  modelList.innerHTML = '';
   modal.classList.remove('hidden');
 }
 function closeSettings() { modal.classList.add('hidden'); }
@@ -99,6 +112,127 @@ document.getElementById('s_cancel').addEventListener('click', closeSettings);
 document.getElementById('s_save').addEventListener('click', saveSettings);
 modal.addEventListener('click', (e) => { if (e.target === modal) closeSettings(); });
 
+// ---------- 拉取模型 / 测试连接 ----------
+// 用设置框里"当前正在编辑"的值（不是已保存的），方便填完立刻验证
+function currentInput() {
+  return {
+    provider: S.provider.value,
+    baseUrl: S.baseUrl.value.trim(),
+    apiKey: S.apiKey.value.trim(),
+    model: S.model.value.trim(),
+  };
+}
+function showTestResult(msg, kind) {
+  testResult.textContent = msg;
+  testResult.className = 'test-result' + (kind ? ' ' + kind : '');
+}
+
+fetchModelsBtn.addEventListener('click', () => {
+  if (!N || !N.listModels) { showTestResult('请在语音助手 App 内使用。', 'err'); return; }
+  const c = currentInput();
+  if (!c.baseUrl || !c.apiKey) { showTestResult('请先填写接口地址和密钥。', 'err'); return; }
+  fetchModelsBtn.disabled = true;
+  fetchModelsBtn.textContent = '拉取中…';
+  showTestResult('正在拉取模型列表…', '');
+  N.listModels(JSON.stringify(c));
+});
+
+testConnBtn.addEventListener('click', () => {
+  if (!N || !N.testConnection) { showTestResult('请在语音助手 App 内使用。', 'err'); return; }
+  const c = currentInput();
+  if (!c.baseUrl || !c.apiKey || !c.model) { showTestResult('请先填写接口地址、密钥和模型。', 'err'); return; }
+  testConnBtn.disabled = true;
+  testConnBtn.textContent = '测试中…';
+  showTestResult('正在测试连接…', '');
+  N.testConnection(JSON.stringify(c));
+});
+
+// 快速填入：一点就自动填好接口类型/地址/模型，用户只需再粘贴密钥
+document.querySelectorAll('.preset').forEach((b) => {
+  b.addEventListener('click', () => {
+    S.provider.value = b.dataset.provider;
+    S.baseUrl.value = b.dataset.url;
+    S.model.value = b.dataset.model;
+    document.querySelectorAll('.preset').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    showTestResult('已填好「' + b.textContent + '」的地址和模型，现在只要把上面的 API 密钥粘贴进去就行。', 'ok');
+  });
+});
+
+// 自检：一眼看清麦克风 / 语音识别 / 朗读 / 接口 哪个是好的
+diagnoseBtn.addEventListener('click', () => {
+  if (!N || !N.diagnostics) { showTestResult('请在语音助手 App 内使用自检。', 'err'); return; }
+  let d;
+  try { d = JSON.parse(N.diagnostics()); } catch { d = {}; }
+  const c = currentInput();
+  const configured = !!(c.baseUrl && c.apiKey && c.model);
+  const yn = (b) => (b ? '✓ 正常' : '✗ 不可用');
+  const lines = [
+    '麦克风权限：' + yn(d.mic),
+    '语音识别服务：' + yn(d.recognitionAvailable),
+    '朗读引擎：' + yn(d.ttsReady),
+    '接口已填写：' + yn(configured),
+  ];
+  let tail = '';
+  if (!d.recognitionAvailable)
+    tail = '\n→ 这台手机没有可用的语音识别服务，所以“点麦克风没反应”。可以先用下方键盘打字聊天；想用语音，就到系统里安装/启用一个语音识别服务（如安装 Google 应用，或在“设置→语言和输入→语音”里启用）。';
+  else if (!d.mic) tail = '\n→ 请到系统设置里给本应用允许“麦克风”权限。';
+  else if (!configured) tail = '\n→ 请先在上面填好接口地址/密钥/模型并保存。';
+  else if (!d.ttsReady) tail = '\n→ 朗读引擎还没就绪，可稍等或在系统里安装中文 TTS 语音。';
+  const allOk = d.mic && d.recognitionAvailable && d.ttsReady && configured;
+  showTestResult(lines.join('\n') + tail, allOk ? 'ok' : 'err');
+});
+
+// 原生回调：拉到的模型列表（字符串数组）
+window.onModelsResult = function (payload) {
+  fetchModelsBtn.disabled = false;
+  fetchModelsBtn.textContent = '↧ 拉取模型';
+  let ids;
+  try { ids = JSON.parse(payload); } catch { ids = []; }
+  if (!Array.isArray(ids) || ids.length === 0) {
+    showTestResult('没拿到模型列表，请手动填写模型名。', 'err');
+    return;
+  }
+  // 填充输入框的自动补全
+  modelList.innerHTML = '';
+  ids.forEach((id) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    modelList.appendChild(opt);
+  });
+  // 渲染成可点的小标签，点一下就填入模型名
+  modelChips.innerHTML = '';
+  ids.forEach((id) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.textContent = id;
+    chip.addEventListener('click', () => {
+      S.model.value = id;
+      [...modelChips.children].forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+    modelChips.appendChild(chip);
+  });
+  modelChips.classList.remove('hidden');
+  showTestResult(`拉到 ${ids.length} 个模型，点一个填入，或直接在上面输入。`, 'ok');
+};
+
+window.onModelsError = function (msg) {
+  fetchModelsBtn.disabled = false;
+  fetchModelsBtn.textContent = '↧ 拉取模型';
+  showTestResult(msg || '拉取失败。', 'err');
+};
+
+// 原生回调：测试连接结果 { ok, msg }
+window.onTestResult = function (payload) {
+  testConnBtn.disabled = false;
+  testConnBtn.textContent = '✓ 测试连接';
+  let data;
+  try { data = JSON.parse(payload); } catch { data = { ok: false, msg: payload }; }
+  showTestResult(data.msg || (data.ok ? '连接正常。' : '连接失败。'), data.ok ? 'ok' : 'err');
+};
+
 // 安卓返回键：优先关闭设置弹窗
 window.onAndroidBack = function () {
   if (!modal.classList.contains('hidden')) { closeSettings(); return true; }
@@ -117,6 +251,21 @@ micBtn.addEventListener('click', () => {
   if (!isConfigured()) { setStatus('请先在右上角⚙️设置里填写接口。'); openSettings(); return; }
   if (listening) { N.stopSpeaking(); N.stopListening(); return; }
   startConversation();
+});
+
+// 键盘输入兜底：语音识别用不了时，打字也能对话，回答照样语音朗读
+function sendTyped() {
+  const t = textInput.value.trim();
+  if (!t) return;
+  if (!N) { setStatus('请在语音助手 App 内打开。'); return; }
+  if (!isConfigured()) { setStatus('请先在右上角⚙️设置里填写接口。'); openSettings(); return; }
+  N.stopSpeaking && N.stopSpeaking();
+  textInput.value = '';
+  sendMessage(t);
+}
+sendTextBtn.addEventListener('click', sendTyped);
+textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); sendTyped(); }
 });
 
 clearBtn.addEventListener('click', () => {
@@ -185,7 +334,10 @@ function buildSystem(userSystem) {
     '- 打开应用：<action>{"tool":"open_app","app":"微信"}</action>\n' +
     '- 导航：<action>{"tool":"navigate","destination":"北京南站"}</action>\n' +
     '- 搜索：<action>{"tool":"search_web","query":"明天天气"}</action>\n' +
-    '- 加日历：<action>{"tool":"add_calendar","title":"开会","hour":15,"minute":0}</action>\n\n' +
+    '- 加日历：<action>{"tool":"add_calendar","title":"开会","hour":15,"minute":0}</action>\n' +
+    '- 调音量：<action>{"tool":"set_volume","level":50}</action>（level 0~100），或 {"tool":"set_volume","action":"up"}（action 可为 up/down/mute）\n' +
+    '- 调亮度：<action>{"tool":"set_brightness","level":80}</action>（level 0~100）\n' +
+    '- 手电筒：<action>{"tool":"flashlight","on":true}</action>（关闭用 "on":false）\n\n' +
     '规则：hour 用 24 小时制；遇到"半小时后""明早八点"等相对时间，请根据下面的当前时间自己换算成具体的 hour/minute（或 seconds）。\n' +
     `当前时间：${nowStr}`
   );
@@ -348,7 +500,7 @@ function showHint() {
   if (document.querySelector('.hint')) return;
   const h = document.createElement('div');
   h.className = 'hint';
-  h.textContent = '点击下方麦克风，对我说话吧。我会用语音回答你。\n还能帮你打电话、订闹钟、定时器、发短信、开应用、导航和搜索。\n首次使用请先点右上角 ⚙️ 填写接口。';
+  h.textContent = '点击下方麦克风，对我说话吧。我会用语音回答你。\n还能帮你打电话、订闹钟、定时器、发短信、开应用、导航、搜索、调音量/亮度、开手电筒。\n首次使用请先点右上角 ⚙️ 填写接口。';
   chatEl.appendChild(h);
 }
 function hideHint() { document.querySelector('.hint')?.remove(); }

@@ -5,6 +5,9 @@ import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -63,6 +66,9 @@ class MainActivity : AppCompatActivity() {
     private val net = Executors.newSingleThreadExecutor()
 
     private var recognizer: SpeechRecognizer? = null
+    // 识别看门狗：开始听后若迟迟没有任何回调，说明系统识别服务不工作，超时给出提示而不是干等
+    @Volatile private var recogCallbackFired = false
+    private var recogTimeout: Runnable? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private val pendingUtterances = AtomicInteger(0)
@@ -119,6 +125,13 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         appInForeground = true
+        // 从"修改系统设置"页返回后，若已授权则自动重试挂起的亮度调节
+        pendingAction?.let { a ->
+            if (a.optString("tool") == "set_brightness" && Settings.System.canWrite(this)) {
+                pendingAction = null
+                runActions(JSONArray().put(a).toString())
+            }
+        }
     }
 
     override fun onStop() {
@@ -237,6 +250,21 @@ class MainActivity : AppCompatActivity() {
         // 网页把 AI 解析出的动作数组（JSON）发过来，这里逐个用安卓原生能力执行。
         @JavascriptInterface
         fun performActions(json: String) = main.post { runActions(json) }
+
+        // ---- 拉取模型列表 / 测试连接（都走原生网络，绕开跨域）----
+        @JavascriptInterface
+        fun listModels(payloadJson: String) = net.execute { runListModels(payloadJson) }
+
+        @JavascriptInterface
+        fun testConnection(payloadJson: String) = net.execute { runTest(payloadJson) }
+
+        // ---- 自检：同步返回各子系统状态，方便排查"没反应"----
+        @JavascriptInterface
+        fun diagnostics(): String = JSONObject().apply {
+            put("mic", hasMic())
+            put("recognitionAvailable", SpeechRecognizer.isRecognitionAvailable(this@MainActivity))
+            put("ttsReady", ttsReady)
+        }.toString()
     }
 
     private fun runActions(json: String) {
@@ -253,6 +281,9 @@ class MainActivity : AppCompatActivity() {
                     "navigate" -> doNavigate(a)
                     "search_web" -> doSearchWeb(a)
                     "add_calendar" -> doAddCalendar(a)
+                    "set_volume" -> doSetVolume(a)
+                    "set_brightness" -> doSetBrightness(a)
+                    "flashlight" -> doFlashlight(a)
                     else -> {}
                 }
             } catch (e: Exception) {
@@ -417,6 +448,70 @@ class MainActivity : AppCompatActivity() {
         tryStart(i, "已为你新建日程“$title”，确认后保存。", true, "手机上没有可用的日历应用。")
     }
 
+    // ---- 调音量（媒体音量，无需权限）----
+    // 支持 level（0~100）或 action: up / down / mute
+    private fun doSetVolume(a: JSONObject) {
+        val am = getSystemService(AUDIO_SERVICE) as AudioManager
+        val stream = AudioManager.STREAM_MUSIC
+        val max = am.getStreamMaxVolume(stream)
+        val flags = AudioManager.FLAG_SHOW_UI
+        when {
+            a.has("level") -> {
+                val level = a.optInt("level").coerceIn(0, 100)
+                am.setStreamVolume(stream, Math.round(level / 100.0 * max).toInt(), flags)
+                actionResult("音量已调到 $level%", false)
+            }
+            a.optString("action") == "mute" -> {
+                am.setStreamVolume(stream, 0, flags); actionResult("已静音", false)
+            }
+            a.optString("action") == "up" -> {
+                am.adjustStreamVolume(stream, AudioManager.ADJUST_RAISE, flags); actionResult("已调高音量", false)
+            }
+            a.optString("action") == "down" -> {
+                am.adjustStreamVolume(stream, AudioManager.ADJUST_LOWER, flags); actionResult("已调低音量", false)
+            }
+            else -> actionResult("音量指令没听清。", true)
+        }
+    }
+
+    // ---- 调屏幕亮度（需"修改系统设置"权限）----
+    private fun doSetBrightness(a: JSONObject) {
+        if (!Settings.System.canWrite(this)) {
+            pendingAction = a
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName"))
+                )
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS))
+            }
+            actionResult("请允许“修改系统设置”后返回，再说一次调节亮度。", true)
+            return
+        }
+        val level = a.optInt("level", -1)
+        if (level !in 0..100) { actionResult("亮度没听清（请说 0 到 100）。", true); return }
+        // 关闭自动亮度，再设置手动亮度（系统亮度范围 0~255，至少留 1 避免全黑）
+        Settings.System.putInt(
+            contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+        )
+        val v = Math.round(level / 100.0 * 255).toInt().coerceIn(1, 255)
+        Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, v)
+        actionResult("亮度已调到 $level%", false)
+    }
+
+    // ---- 开关手电筒（Camera2 手电模式，无需相机权限）----
+    private fun doFlashlight(a: JSONObject) {
+        val on = a.optBoolean("on", true)
+        val cm = getSystemService(CAMERA_SERVICE) as CameraManager
+        val id = cm.cameraIdList.firstOrNull {
+            cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }
+        if (id == null) { actionResult("这台手机好像没有闪光灯。", true); return }
+        cm.setTorchMode(id, on)
+        actionResult(if (on) "已打开手电筒" else "已关闭手电筒", false)
+    }
+
     // ---- 联系人查询 ----
     private fun hasContacts() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) ==
@@ -479,33 +574,45 @@ class MainActivity : AppCompatActivity() {
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) = dispatch("onSpeechStart")
-                override fun onBeginningOfSpeech() {}
+                override fun onReadyForSpeech(params: Bundle?) { markRecogAlive(); dispatch("onSpeechStart") }
+                override fun onBeginningOfSpeech() { markRecogAlive() }
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
+                override fun onEndOfSpeech() { markRecogAlive() }
 
                 override fun onPartialResults(partial: Bundle?) {
+                    markRecogAlive()
                     firstResult(partial)?.let { dispatch("onSpeechPartial", it) }
                 }
 
                 override fun onResults(results: Bundle?) {
+                    markRecogAlive()
                     val text = firstResult(results) ?: ""
                     dispatch("onSpeechResult", text)
                     dispatch("onSpeechEnd")
                 }
 
                 override fun onError(error: Int) {
+                    markRecogAlive()
                     dispatch("onSpeechEnd")
+                    // 每一种错误都给出提示（含错误码），不再静默，方便定位"点了没反应"
                     val msg = when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH,
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没听清，请再点一次麦克风。"
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "没有麦克风权限。"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没听清，请再点一次麦克风说话。"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "没有麦克风权限，请在系统设置里允许。"
                         SpeechRecognizer.ERROR_NETWORK,
-                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "语音识别需要联网，请检查网络。"
-                        else -> null
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                            "语音识别联网失败（错误码 $error）。系统识别多要连 Google 服务器，若在国内且没给识别服务全局代理就会失败；可在系统里装“离线中文语音包”后重试，或先用下方打字。"
+                        SpeechRecognizer.ERROR_SERVER,
+                        SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
+                            "语音识别服务器出错（错误码 $error），多为联网/代理问题。建议装离线中文语音包，或先用下方打字。"
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别服务正忙（错误码 8），请等一两秒再点一次。"
+                        SpeechRecognizer.ERROR_CLIENT ->
+                            "识别服务启动失败（错误码 5），可能系统识别服务不兼容。建议装离线中文语音包，或先用下方打字。"
+                        SpeechRecognizer.ERROR_AUDIO -> "录音出错（错误码 3），麦克风可能被其它应用占用。"
+                        else -> "语音识别出错（错误码 $error）。可尝试装离线中文语音包，或先用下方打字。"
                     }
-                    if (msg != null) dispatch("onSpeechError", msg)
+                    dispatch("onSpeechError", msg)
                 }
 
                 override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -516,7 +623,27 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
+        // 启动看门狗：2.5 秒内若识别服务无任何回调，说明它没在工作，明确提示而不是干等
+        recogCallbackFired = false
+        recogTimeout?.let { main.removeCallbacks(it) }
+        recogTimeout = Runnable {
+            if (!recogCallbackFired) {
+                recognizer?.cancel()
+                dispatch("onSpeechEnd")
+                dispatch(
+                    "onSpeechError",
+                    "语音识别迟迟没有响应（可能识别服务卡住或联网失败）。可在系统里装“离线中文语音包”后重试，或直接用下方键盘打字。"
+                )
+            }
+        }
+        main.postDelayed(recogTimeout!!, 2500)
         recognizer?.startListening(intent)
+    }
+
+    // 收到识别服务的任意回调即视为"它还活着"，撤销看门狗
+    private fun markRecogAlive() {
+        recogCallbackFired = true
+        recogTimeout?.let { main.removeCallbacks(it) }
     }
 
     private fun firstResult(bundle: Bundle?): String? =
@@ -619,6 +746,96 @@ class MainActivity : AppCompatActivity() {
             if (d?.optString("type") == "text_delta") d.optString("text") else null
         } else null
     } catch (_: Exception) { null }
+
+    // ---------------- 拉取模型列表 ----------------
+    // OpenAI 兼容：GET {baseUrl}/models；Anthropic：GET {baseUrl}/v1/models；两者返回都形如 {"data":[{"id":...}]}
+    private fun runListModels(payloadJson: String) {
+        try {
+            val p = JSONObject(payloadJson)
+            val provider = p.optString("provider", "openai")
+            val baseUrl = p.optString("baseUrl").trimEnd('/')
+            val apiKey = p.optString("apiKey")
+            if (baseUrl.isEmpty() || apiKey.isEmpty()) {
+                dispatch("onModelsError", "请先填写接口地址和密钥。"); return
+            }
+            val isAnthropic = provider == "anthropic"
+            val conn = (URL(if (isAnthropic) "$baseUrl/v1/models" else "$baseUrl/models")
+                .openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 15000
+                readTimeout = 20000
+                if (isAnthropic) {
+                    setRequestProperty("x-api-key", apiKey)
+                    setRequestProperty("anthropic-version", "2023-06-01")
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+            }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream))
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            if (code !in 200..299) {
+                dispatch("onModelsError", "接口返回 $code：${text.take(200)}"); return
+            }
+            val ids = JSONArray()
+            JSONObject(text).optJSONArray("data")?.let { data ->
+                for (i in 0 until data.length()) {
+                    data.optJSONObject(i)?.optString("id")?.takeIf { it.isNotEmpty() }?.let { ids.put(it) }
+                }
+            }
+            if (ids.length() == 0) dispatch("onModelsError", "接口没有返回模型列表，请手动填写模型名。")
+            else dispatch("onModelsResult", ids.toString())
+        } catch (e: Exception) {
+            dispatch("onModelsError", "拉取失败：${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    // ---------------- 测试连接 ----------------
+    // 用当前配置发一条极短的请求，验证地址 / 密钥 / 模型是否都可用
+    private fun runTest(payloadJson: String) {
+        fun result(ok: Boolean, msg: String) =
+            dispatch("onTestResult", JSONObject().put("ok", ok).put("msg", msg).toString())
+        try {
+            val p = JSONObject(payloadJson)
+            val provider = p.optString("provider", "openai")
+            val baseUrl = p.optString("baseUrl").trimEnd('/')
+            val apiKey = p.optString("apiKey")
+            val model = p.optString("model")
+            if (baseUrl.isEmpty() || apiKey.isEmpty() || model.isEmpty()) {
+                result(false, "请先填写接口地址、密钥和模型。"); return
+            }
+            val isAnthropic = provider == "anthropic"
+            val conn = (URL(if (isAnthropic) "$baseUrl/v1/messages" else "$baseUrl/chat/completions")
+                .openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 15000
+                readTimeout = 30000
+                setRequestProperty("Content-Type", "application/json")
+                if (isAnthropic) {
+                    setRequestProperty("x-api-key", apiKey)
+                    setRequestProperty("anthropic-version", "2023-06-01")
+                } else {
+                    setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+            }
+            val body = JSONObject().apply {
+                put("model", model)
+                put("max_tokens", 8)
+                put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", "你好")))
+            }
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                result(true, "连接正常，模型「$model」可用 ✓")
+            } else {
+                val err = (conn.errorStream ?: conn.inputStream)?.bufferedReader()?.use { it.readText() } ?: ""
+                result(false, "接口返回 $code：${err.take(200)}")
+            }
+        } catch (e: Exception) {
+            result(false, "连接失败：${e.message ?: e.javaClass.simpleName}")
+        }
+    }
 
     // ---------------- 调用网页里的回调 ----------------
     private fun dispatch(func: String, arg: String? = null) {

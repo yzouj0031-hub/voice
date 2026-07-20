@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- 按名字打开手机上的其它应用（枚举已安装应用） -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- 调节屏幕亮度（写系统设置，需用户在专门页面授权；音量和手电筒无需权限） -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
 
     <!-- 语音识别 / 合成服务，以及助手动作用到的系统应用（Android 11+ 需声明可见性） -->
     <queries>
