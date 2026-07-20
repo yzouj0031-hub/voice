@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="语音助手" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="style.css" />
+  <title>语音助手</title>
+</head>
+<body>
+  <header class="topbar">
+    <span class="title">语音助手</span>
+    <button id="clearBtn" class="clear-btn" title="清空对话" aria-label="清空对话">清空</button>
+  </header>
+
+  <main id="chat" class="chat" aria-live="polite"></main>
+
+  <section class="dock">
+    <p id="status" class="status">点击麦克风开始说话</p>
+    <button id="micBtn" class="mic" aria-label="按下说话">
+      <span class="mic-ring"></span>
+      <svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true">
+        <path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/>
+        <path fill="currentColor" d="M19 12a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V23h2v-2.06A9 9 0 0 0 21 12h-2Z"/>
+      </svg>
+    </button>
+    <button id="stopSpeakBtn" class="stop-speak hidden" aria-label="停止朗读">⏹ 停止朗读</button>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

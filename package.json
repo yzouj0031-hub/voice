@@ -1,0 +1,19 @@
+{
+  "name": "voice-chat-assistant",
+  "version": "1.0.0",
+  "description": "一个像 Siri 一样的语音聊天助手，浏览器语音识别 + 可配置 AI 接口，手机即可使用",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "license": "MIT"
+}
