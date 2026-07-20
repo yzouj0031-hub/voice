@@ -67,6 +67,12 @@ body { display: flex; flex-direction: column; height: 100dvh; }
 .btn.ghost { background: rgba(255,255,255,.08); color: var(--text); }
 .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
 
+/* 快速填入预设 */
+.preset-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.preset-label { font-size: 13px; color: var(--muted); }
+.preset { background: #0b1020; border: 1px solid rgba(255,255,255,.15); color: var(--text); padding: 8px 14px; border-radius: 999px; font-size: 14px; font-family: inherit; }
+.preset.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: #fff; }
+
 /* 拉取模型 / 测试连接 */
 .mini-actions { display: flex; gap: 10px; }
 .btn-mini { flex: 1; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); color: var(--text); padding: 10px; border-radius: 10px; font-size: 14px; font-family: inherit; }

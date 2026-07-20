@@ -37,6 +37,15 @@
   <div id="settings" class="modal hidden">
     <div class="sheet">
       <h2>设置</h2>
+      <div class="preset-row">
+        <span class="preset-label">快速填入</span>
+        <button type="button" class="preset" data-provider="openai" data-url="https://open.bigmodel.cn/api/paas/v4" data-model="glm-4-flash">智谱·免费</button>
+        <button type="button" class="preset" data-provider="openai" data-url="https://api.deepseek.com/v1" data-model="deepseek-chat">DeepSeek</button>
+        <button type="button" class="preset" data-provider="openai" data-url="https://api.moonshot.cn/v1" data-model="moonshot-v1-8k">Kimi</button>
+        <button type="button" class="preset" data-provider="openai" data-url="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI</button>
+        <button type="button" class="preset" data-provider="anthropic" data-url="https://api.anthropic.com" data-model="claude-haiku-4-5">Claude</button>
+      </div>
+      <p class="tip">👆 点一个就自动填好“接口类型/地址/模型”，你只需在下面粘贴自己的 API 密钥。没有密钥？选“智谱·免费”，去 open.bigmodel.cn 注册后在控制台复制 Key 即可，glm-4-flash 免费。</p>
       <label>接口类型
         <select id="s_provider">
           <option value="openai">OpenAI 兼容（通用）</option>

@@ -147,6 +147,18 @@ testConnBtn.addEventListener('click', () => {
   N.testConnection(JSON.stringify(c));
 });
 
+// 快速填入：一点就自动填好接口类型/地址/模型，用户只需再粘贴密钥
+document.querySelectorAll('.preset').forEach((b) => {
+  b.addEventListener('click', () => {
+    S.provider.value = b.dataset.provider;
+    S.baseUrl.value = b.dataset.url;
+    S.model.value = b.dataset.model;
+    document.querySelectorAll('.preset').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    showTestResult('已填好「' + b.textContent + '」的地址和模型，现在只要把上面的 API 密钥粘贴进去就行。', 'ok');
+  });
+});
+
 // 自检：一眼看清麦克风 / 语音识别 / 朗读 / 接口 哪个是好的
 diagnoseBtn.addEventListener('click', () => {
   if (!N || !N.diagnostics) { showTestResult('请在语音助手 App 内使用自检。', 'err'); return; }
