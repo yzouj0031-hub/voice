@@ -280,7 +280,10 @@ function buildSystem(userSystem) {
     '- 打开应用：<action>{"tool":"open_app","app":"微信"}</action>\n' +
     '- 导航：<action>{"tool":"navigate","destination":"北京南站"}</action>\n' +
     '- 搜索：<action>{"tool":"search_web","query":"明天天气"}</action>\n' +
-    '- 加日历：<action>{"tool":"add_calendar","title":"开会","hour":15,"minute":0}</action>\n\n' +
+    '- 加日历：<action>{"tool":"add_calendar","title":"开会","hour":15,"minute":0}</action>\n' +
+    '- 调音量：<action>{"tool":"set_volume","level":50}</action>（level 0~100），或 {"tool":"set_volume","action":"up"}（action 可为 up/down/mute）\n' +
+    '- 调亮度：<action>{"tool":"set_brightness","level":80}</action>（level 0~100）\n' +
+    '- 手电筒：<action>{"tool":"flashlight","on":true}</action>（关闭用 "on":false）\n\n' +
     '规则：hour 用 24 小时制；遇到"半小时后""明早八点"等相对时间，请根据下面的当前时间自己换算成具体的 hour/minute（或 seconds）。\n' +
     `当前时间：${nowStr}`
   );
@@ -443,7 +446,7 @@ function showHint() {
   if (document.querySelector('.hint')) return;
   const h = document.createElement('div');
   h.className = 'hint';
-  h.textContent = '点击下方麦克风，对我说话吧。我会用语音回答你。\n还能帮你打电话、订闹钟、定时器、发短信、开应用、导航和搜索。\n首次使用请先点右上角 ⚙️ 填写接口。';
+  h.textContent = '点击下方麦克风，对我说话吧。我会用语音回答你。\n还能帮你打电话、订闹钟、定时器、发短信、开应用、导航、搜索、调音量/亮度、开手电筒。\n首次使用请先点右上角 ⚙️ 填写接口。';
   chatEl.appendChild(h);
 }
 function hideHint() { document.querySelector('.hint')?.remove(); }

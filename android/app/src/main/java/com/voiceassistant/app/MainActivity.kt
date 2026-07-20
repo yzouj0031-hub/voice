@@ -5,6 +5,9 @@ import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -119,6 +122,13 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         appInForeground = true
+        // 从"修改系统设置"页返回后，若已授权则自动重试挂起的亮度调节
+        pendingAction?.let { a ->
+            if (a.optString("tool") == "set_brightness" && Settings.System.canWrite(this)) {
+                pendingAction = null
+                runActions(JSONArray().put(a).toString())
+            }
+        }
     }
 
     override fun onStop() {
@@ -260,6 +270,9 @@ class MainActivity : AppCompatActivity() {
                     "navigate" -> doNavigate(a)
                     "search_web" -> doSearchWeb(a)
                     "add_calendar" -> doAddCalendar(a)
+                    "set_volume" -> doSetVolume(a)
+                    "set_brightness" -> doSetBrightness(a)
+                    "flashlight" -> doFlashlight(a)
                     else -> {}
                 }
             } catch (e: Exception) {
@@ -422,6 +435,70 @@ class MainActivity : AppCompatActivity() {
             i.putExtra(CalendarContract.EXTRA_EVENT_END_TIME, cal.timeInMillis + 60 * 60 * 1000)
         }
         tryStart(i, "已为你新建日程“$title”，确认后保存。", true, "手机上没有可用的日历应用。")
+    }
+
+    // ---- 调音量（媒体音量，无需权限）----
+    // 支持 level（0~100）或 action: up / down / mute
+    private fun doSetVolume(a: JSONObject) {
+        val am = getSystemService(AUDIO_SERVICE) as AudioManager
+        val stream = AudioManager.STREAM_MUSIC
+        val max = am.getStreamMaxVolume(stream)
+        val flags = AudioManager.FLAG_SHOW_UI
+        when {
+            a.has("level") -> {
+                val level = a.optInt("level").coerceIn(0, 100)
+                am.setStreamVolume(stream, Math.round(level / 100.0 * max).toInt(), flags)
+                actionResult("音量已调到 $level%", false)
+            }
+            a.optString("action") == "mute" -> {
+                am.setStreamVolume(stream, 0, flags); actionResult("已静音", false)
+            }
+            a.optString("action") == "up" -> {
+                am.adjustStreamVolume(stream, AudioManager.ADJUST_RAISE, flags); actionResult("已调高音量", false)
+            }
+            a.optString("action") == "down" -> {
+                am.adjustStreamVolume(stream, AudioManager.ADJUST_LOWER, flags); actionResult("已调低音量", false)
+            }
+            else -> actionResult("音量指令没听清。", true)
+        }
+    }
+
+    // ---- 调屏幕亮度（需"修改系统设置"权限）----
+    private fun doSetBrightness(a: JSONObject) {
+        if (!Settings.System.canWrite(this)) {
+            pendingAction = a
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName"))
+                )
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS))
+            }
+            actionResult("请允许“修改系统设置”后返回，再说一次调节亮度。", true)
+            return
+        }
+        val level = a.optInt("level", -1)
+        if (level !in 0..100) { actionResult("亮度没听清（请说 0 到 100）。", true); return }
+        // 关闭自动亮度，再设置手动亮度（系统亮度范围 0~255，至少留 1 避免全黑）
+        Settings.System.putInt(
+            contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
+            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+        )
+        val v = Math.round(level / 100.0 * 255).toInt().coerceIn(1, 255)
+        Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, v)
+        actionResult("亮度已调到 $level%", false)
+    }
+
+    // ---- 开关手电筒（Camera2 手电模式，无需相机权限）----
+    private fun doFlashlight(a: JSONObject) {
+        val on = a.optBoolean("on", true)
+        val cm = getSystemService(CAMERA_SERVICE) as CameraManager
+        val id = cm.cameraIdList.firstOrNull {
+            cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }
+        if (id == null) { actionResult("这台手机好像没有闪光灯。", true); return }
+        cm.setTorchMode(id, on)
+        actionResult(if (on) "已打开手电筒" else "已关闭手电筒", false)
     }
 
     // ---- 联系人查询 ----
