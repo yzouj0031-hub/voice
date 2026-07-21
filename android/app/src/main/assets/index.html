@@ -95,7 +95,7 @@
       <label>唤醒词
         <input id="s_wakeWord" type="text" placeholder="你好助手" autocomplete="off" autocapitalize="off" spellcheck="false" />
       </label>
-      <p class="tip">⚠️ 语音唤醒需要“持续监听”，比较耗电、可能用到流量，建议在系统里给本应用装/开启离线中文语音包。首次开启会引导你授予“显示在其他应用上层”权限（否则喊了只弹通知、不会跳出来）。</p>
+      <p class="tip">⚠️ 语音唤醒用的是<b>App 自带的离线引擎</b>，不依赖手机系统的语音识别（系统识别坏了也能用）。首次开启会<b>下载一次约 42MB 的中文唤醒模型</b>（需联网，之后完全离线）。持续监听会更耗电。首次开启还会引导你授予“<b>显示在其他应用上层</b>”权限（否则喊了只弹通知、不会跳出来）。退出 App 后喊唤醒词即可唤起。</p>
 
       <p class="tip">常见填法：DeepSeek → 地址 https://api.deepseek.com/v1，模型 deepseek-chat；Kimi → https://api.moonshot.cn/v1，moonshot-v1-8k；Claude → 接口类型选 Anthropic，地址 https://api.anthropic.com，模型 claude-haiku-4-5。</p>
 

@@ -675,6 +675,19 @@ function refreshMicBanner(hasPerm) {
 // 回到前台（含从设置页返回）时刷新
 window.onForeground = function (has) { refreshMicBanner(has === '1'); };
 window.onMicPrompt = function () { setStatus('请在弹出的框里点「允许」，之后会自动开始'); };
+
+// ---------- 离线唤醒模型下载进度 ----------
+window.onWakeModelProgress = function (pct) {
+  const n = parseInt(pct, 10);
+  if (n < 0) setStatus('唤醒模型下载完成，正在解压…');
+  else setStatus('正在下载离线唤醒模型 ' + n + '%（约 42MB，仅首次，需联网）…');
+};
+window.onWakeModelReady = function () {
+  setStatus('✅ 语音唤醒已就绪！退出 App 后喊唤醒词即可唤起');
+};
+window.onWakeModelError = function (msg) {
+  setStatus('唤醒模型准备失败：' + (msg || '') + '（可稍后在设置里重开重试）');
+};
 function scrollToBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
 function showHint() {
   if (document.querySelector('.hint')) return;

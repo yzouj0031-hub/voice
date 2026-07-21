@@ -91,6 +91,7 @@ class MainActivity : AppCompatActivity() {
 
     private var pageLoaded = false
     private var pendingWake = false
+    @Volatile private var wakeDownloading = false
 
     // 官方推荐的现代权限接口（比老式 requestPermissions 回调更可靠）
     private val micLauncher: ActivityResultLauncher<String> =
@@ -146,6 +147,33 @@ class MainActivity : AppCompatActivity() {
     // 被唤醒后自动开始一轮对话（稍作延迟，确保唤醒服务已释放麦克风）
     private fun triggerAutoStart() {
         main.postDelayed({ dispatch("autoStartConversation") }, 600)
+    }
+
+    private fun startWakeService(word: String) {
+        val i = Intent(this, WakeService::class.java).apply {
+            action = WakeService.ACTION_START
+            putExtra(WakeService.EXTRA_WORD, word)
+        }
+        ContextCompat.startForegroundService(this, i)
+    }
+
+    // 首次开启唤醒：后台下载离线模型（约 42MB），进度回传网页，完成后启动唤醒服务
+    private fun downloadWakeModelThenStart(word: String) {
+        if (wakeDownloading) return
+        wakeDownloading = true
+        dispatch("onWakeModelProgress", "0")
+        Thread {
+            val err = WakeModel.ensure(this) { pct -> dispatch("onWakeModelProgress", pct.toString()) }
+            main.post {
+                wakeDownloading = false
+                if (err == null) {
+                    dispatch("onWakeModelReady")
+                    startWakeService(word)
+                } else {
+                    dispatch("onWakeModelError", err)
+                }
+            }
+        }.start()
     }
 
     override fun onResume() {
@@ -249,11 +277,11 @@ class MainActivity : AppCompatActivity() {
                         this@MainActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF
                     )
                 }
-                val i = Intent(this@MainActivity, WakeService::class.java).apply {
-                    action = WakeService.ACTION_START
-                    putExtra(WakeService.EXTRA_WORD, word)
+                if (WakeModel.isReady(this@MainActivity)) {
+                    startWakeService(word)
+                } else {
+                    downloadWakeModelThenStart(word) // 首次开启：先下载离线唤醒模型
                 }
-                ContextCompat.startForegroundService(this@MainActivity, i)
             } else {
                 val i = Intent(this@MainActivity, WakeService::class.java).apply {
                     action = WakeService.ACTION_STOP
