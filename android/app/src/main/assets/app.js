@@ -70,7 +70,10 @@ function openSettings() {
   modelList.innerHTML = '';
   modal.classList.remove('hidden');
 }
-function closeSettings() { modal.classList.add('hidden'); }
+function closeSettings() {
+  if (wakeTesting && N && N.stopWakeTest) { N.stopWakeTest(); wakeTesting = false; if (wakeTestBtn) wakeTestBtn.textContent = '🎤 测试唤醒识别'; }
+  modal.classList.add('hidden');
+}
 function saveSettings() {
   localStorage.setItem('cfg_provider', S.provider.value);
   localStorage.setItem('cfg_baseUrl', S.baseUrl.value.trim());
@@ -687,6 +690,34 @@ window.onWakeModelReady = function () {
 };
 window.onWakeModelError = function (msg) {
   setStatus('唤醒模型准备失败：' + (msg || '') + '（可稍后在设置里重开重试）');
+};
+
+// ---------- 测试唤醒识别（当场看引擎听到了什么）----------
+let wakeTesting = false;
+const wakeTestBtn = document.getElementById('s_wakeTest');
+if (wakeTestBtn) {
+  wakeTestBtn.addEventListener('click', () => {
+    if (!N || !N.startWakeTest) { showTestResult('请在 App 内使用。', 'err'); return; }
+    if (wakeTesting) {
+      N.stopWakeTest();
+      wakeTesting = false;
+      wakeTestBtn.textContent = '🎤 测试唤醒识别';
+      showTestResult('已停止测试。', '');
+      return;
+    }
+    wakeTesting = true;
+    wakeTestBtn.textContent = '⏹ 停止测试';
+    showTestResult('准备中…', '');
+    N.startWakeTest((S.wakeWord.value || '你好助手').trim());
+  });
+}
+// 实时显示引擎听到的文字
+window.onWakeHeard = function (text) {
+  if (!wakeTesting && !/加载|准备|开始|下载/.test(text)) return;
+  showTestResult('🎧 听到：' + text, '');
+};
+window.onWakeTestMatched = function () {
+  showTestResult('✅ 听到唤醒词了！识别没问题——如果实际还弹不出来，那是「后台弹出界面/后台运行」权限被 vivo 拦了。', 'ok');
 };
 function scrollToBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
 function showHint() {

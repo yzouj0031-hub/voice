@@ -96,6 +96,10 @@
         <input id="s_wakeWord" type="text" placeholder="你好助手" autocomplete="off" autocapitalize="off" spellcheck="false" />
       </label>
       <p class="tip">⚠️ 语音唤醒用的是<b>App 自带的离线引擎</b>，不依赖手机系统的语音识别（系统识别坏了也能用）。首次开启会<b>下载一次约 42MB 的中文唤醒模型</b>（需联网，之后完全离线）。持续监听会更耗电。首次开启还会引导你授予“<b>显示在其他应用上层</b>”权限（否则喊了只弹通知、不会跳出来）。退出 App 后喊唤醒词即可唤起。</p>
+      <div class="mini-actions">
+        <button id="s_wakeTest" type="button" class="btn-mini">🎤 测试唤醒识别</button>
+      </div>
+      <p class="tip">👆 唤醒喊了没反应时点这个：会当场用离线引擎听你说话，<b>实时显示它听到了什么</b>。对手机说“你好助手”——若显示的文字接近、并出现“✅ 听到唤醒词”，说明识别没问题（那问题在后台弹窗权限）；若一直识别不出或是乱码，那就是识别没听清，我来调。</p>
 
       <p class="tip">常见填法：DeepSeek → 地址 https://api.deepseek.com/v1，模型 deepseek-chat；Kimi → https://api.moonshot.cn/v1，moonshot-v1-8k；Claude → 接口类型选 Anthropic，地址 https://api.anthropic.com，模型 claude-haiku-4-5。</p>
 

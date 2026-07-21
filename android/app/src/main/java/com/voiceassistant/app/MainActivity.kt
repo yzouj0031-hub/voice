@@ -37,6 +37,9 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.SpeechService
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
@@ -92,6 +95,12 @@ class MainActivity : AppCompatActivity() {
     private var pageLoaded = false
     private var pendingWake = false
     @Volatile private var wakeDownloading = false
+
+    // 唤醒识别测试（前台）
+    private var testModel: Model? = null
+    private var testSpeech: SpeechService? = null
+    private var testRec: Recognizer? = null
+    private var testWord = ""
 
     // 官方推荐的现代权限接口（比老式 requestPermissions 回调更可靠）
     private val micLauncher: ActivityResultLauncher<String> =
@@ -157,6 +166,62 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.startForegroundService(this, i)
     }
 
+    // ---- 唤醒识别测试：前台跑 Vosk，实时回传听到的文字 ----
+    private fun normalizeWord(s: String): String {
+        val sb = StringBuilder()
+        for (c in s.lowercase()) if (c.isLetterOrDigit() || c.code in 0x4E00..0x9FFF) sb.append(c)
+        return sb.toString()
+    }
+
+    private fun startWakeTest(word: String) {
+        if (!hasMic()) { requestMicOrGuide(); return }
+        if (!WakeModel.isReady(this)) {
+            dispatch("onWakeHeard", "唤醒模型还没下载好——请先在设置里打开「语音唤醒」等它下载完成，再来测试。")
+            return
+        }
+        testWord = normalizeWord(word.ifBlank { "你好助手" })
+        dispatch("onWakeHeard", "正在加载识别模型…")
+        Thread {
+            val m = testModel ?: try { Model(WakeModel.modelPath(this).absolutePath) } catch (_: Exception) { null }
+            main.post {
+                if (m == null) { dispatch("onWakeHeard", "模型加载失败，请重试。"); return@post }
+                testModel = m
+                try {
+                    val rec = Recognizer(m, 16000.0f)
+                    val svc = SpeechService(rec, 16000.0f)
+                    svc.startListening(object : org.vosk.android.RecognitionListener {
+                        override fun onPartialResult(hypothesis: String?) = onTestHeard(hypothesis, "partial")
+                        override fun onResult(hypothesis: String?) = onTestHeard(hypothesis, "text")
+                        override fun onFinalResult(hypothesis: String?) = onTestHeard(hypothesis, "text")
+                        override fun onError(e: Exception?) {}
+                        override fun onTimeout() {}
+                    })
+                    testRec = rec
+                    testSpeech = svc
+                    dispatch("onWakeHeard", "开始了，对着手机清楚地说：你好助手")
+                } catch (e: Exception) {
+                    dispatch("onWakeHeard", "启动识别失败：${e.message ?: ""}")
+                }
+            }
+        }.start()
+    }
+
+    private fun onTestHeard(json: String?, key: String) {
+        if (json == null) return
+        val t = try { JSONObject(json).optString(key) } catch (_: Exception) { "" }
+        if (t.isBlank()) return
+        dispatch("onWakeHeard", t)
+        if (normalizeWord(t).contains(testWord)) dispatch("onWakeTestMatched")
+    }
+
+    private fun stopWakeTest() {
+        try { testSpeech?.stop() } catch (_: Exception) {}
+        try { testSpeech?.shutdown() } catch (_: Exception) {}
+        try { testRec?.close() } catch (_: Exception) {}
+        testSpeech = null
+        testRec = null
+    }
+
     // 首次开启唤醒：后台下载离线模型（约 42MB），进度回传网页，完成后启动唤醒服务
     private fun downloadWakeModelThenStart(word: String) {
         if (wakeDownloading) return
@@ -192,6 +257,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         appInForeground = false
+        stopWakeTest() // 退到后台就停掉前台测试，把麦克风让给后台唤醒服务
         super.onStop()
     }
 
@@ -289,6 +355,16 @@ class MainActivity : AppCompatActivity() {
                 ContextCompat.startForegroundService(this@MainActivity, i)
             }
         }
+
+        // 唤醒识别测试：在前台跑 Vosk，实时把听到的文字回传网页，便于排查唤醒不响应
+        @JavascriptInterface
+        fun startWakeTest(word: String) = main.post { startWakeTest(word) }
+
+        @JavascriptInterface
+        fun stopWakeTest() = main.post { stopWakeTest() }
+
+        @JavascriptInterface
+        fun wakeModelReady(): Boolean = WakeModel.isReady(this@MainActivity)
 
         // 麦克风权限：查询 + 主动请求（供网页顶部横幅使用）
         @JavascriptInterface
@@ -1041,6 +1117,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         recSend = false
         recFlag = false
+        stopWakeTest()
+        try { testModel?.close() } catch (_: Exception) {}
+        testModel = null
         recognizer?.destroy()
         tts?.shutdown()
         currentConn?.disconnect()
