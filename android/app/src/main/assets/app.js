@@ -340,6 +340,11 @@ window.onSpeechError = function (msg) {
   showMaybePermissionError(msg || '识别出错');
 };
 
+// 正在弹系统授权框，提示用户点允许（不是错误）
+window.onMicPrompt = function () {
+  setStatus('请在弹出的框里点「允许」，之后会自动开始');
+};
+
 // 授予麦克风权限后自动开始；被拒绝时引导去系统设置开启
 window.onMicGranted = function () {
   setStatus('已获得麦克风权限，开始…');

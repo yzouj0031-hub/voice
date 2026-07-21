@@ -162,6 +162,17 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
+    // 无麦克风权限时：能弹框就弹系统授权框（允许后 onMicGranted 自动继续）；
+    // 已被永久拒绝（弹不出框）则直接提示去系统设置手动开启。
+    private fun requestMicOrGuide() {
+        val canPrompt = ActivityCompat.shouldShowRequestPermissionRationale(
+            this, Manifest.permission.RECORD_AUDIO
+        )
+        // 首次请求时 shouldShow 也是 false，所以无脑先请求一次；系统会决定是否弹框
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+        dispatch("onMicPrompt", if (canPrompt) "1" else "0")
+    }
+
     // ---------------- 语音合成 ----------------
     private fun initTts() {
         tts = TextToSpeech(this) { status ->
@@ -594,8 +605,7 @@ class MainActivity : AppCompatActivity() {
     // ---------------- 语音识别（对话） ----------------
     private fun startRecognition() {
         if (!hasMic()) {
-            ensureMicPermission()
-            dispatch("onSpeechError", "没有麦克风权限，请在系统设置里允许。")
+            requestMicOrGuide() // 弹授权框；允许后 onMicGranted 会自动重开
             return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -684,8 +694,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("MissingPermission") // 调用前已用 hasMic() 检查
     private fun startCloudRec() {
         if (!hasMic()) {
-            ensureMicPermission()
-            dispatch("onRecordError", "没有麦克风权限，请允许后重试。")
+            requestMicOrGuide() // 弹授权框；允许后 onMicGranted 会自动重开
             return
         }
         if (recFlag) return
