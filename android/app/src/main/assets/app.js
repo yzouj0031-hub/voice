@@ -283,7 +283,7 @@ window.onRecordCancel = function () {
 window.onRecordError = function (msg) {
   cloudRecording = false;
   micBtn.classList.remove('listening');
-  setStatus(msg || '录音失败');
+  showMaybePermissionError(msg || '录音失败');
 };
 window.onCloudAudio = function (b64) {
   cloudRecording = false;
@@ -337,8 +337,27 @@ window.onSpeechEnd = function () {
 window.onSpeechError = function (msg) {
   listening = false;
   micBtn.classList.remove('listening');
-  setStatus(msg || '识别出错');
+  showMaybePermissionError(msg || '识别出错');
 };
+
+// 授予麦克风权限后自动开始；被拒绝时引导去系统设置开启
+window.onMicGranted = function () {
+  setStatus('已获得麦克风权限，开始…');
+  startConversation();
+};
+window.onMicDenied = function (permanent) {
+  if (permanent === '1') {
+    setStatus('麦克风权限被禁止，点这里去开启 ▸', goOpenAppSettings);
+  } else {
+    setStatus('需要麦克风权限才能语音，点这里去开启 ▸', goOpenAppSettings);
+  }
+};
+
+// 错误里若涉及"权限"，让状态栏可点，一键跳系统设置
+function showMaybePermissionError(msg) {
+  if (/权限/.test(msg)) setStatus(msg + '（点此去开启 ▸）', goOpenAppSettings);
+  else setStatus(msg);
+}
 
 // ---------- 原生回调：语音合成 ----------
 window.onTtsStart = function () { stopSpeakBtn.classList.remove('hidden'); };
@@ -611,7 +630,16 @@ function addBubble(role, text) {
   scrollToBottom();
   return div;
 }
-function setStatus(t) { statusEl.textContent = t; }
+// 状态栏可带一个"点击动作"（比如引导去系统设置开权限）
+let statusAction = null;
+function setStatus(t, action) {
+  statusEl.textContent = t;
+  statusAction = action || null;
+  statusEl.style.textDecoration = action ? 'underline' : '';
+  statusEl.style.cursor = action ? 'pointer' : '';
+}
+statusEl.addEventListener('click', () => { if (statusAction) statusAction(); });
+function goOpenAppSettings() { if (N && N.openAppSettings) N.openAppSettings(); }
 function scrollToBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
 function showHint() {
   if (document.querySelector('.hint')) return;

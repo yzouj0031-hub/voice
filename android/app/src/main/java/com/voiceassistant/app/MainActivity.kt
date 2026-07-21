@@ -243,6 +243,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // 打开本应用的系统设置页（用于手动开启被拒绝的权限）
+        @JavascriptInterface
+        fun openAppSettings() = main.post {
+            val i = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            )
+            try { startActivity(i) } catch (_: Exception) {}
+        }
+
         @JavascriptInterface
         fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(this@MainActivity)
 
@@ -953,6 +963,17 @@ class MainActivity : AppCompatActivity() {
             pendingAction?.let { a ->
                 pendingAction = null
                 main.post { runActions(JSONArray().put(a).toString()) }
+            }
+        }
+        // 麦克风权限结果：授予后自动开始一轮对话；被永久拒绝则提示去系统设置开启
+        if (requestCode == REQ_MIC) {
+            if (granted) {
+                dispatch("onMicGranted")
+            } else {
+                val permanent = !ActivityCompat.shouldShowRequestPermissionRationale(
+                    this, Manifest.permission.RECORD_AUDIO
+                )
+                dispatch("onMicDenied", if (permanent) "1" else "0")
             }
         }
     }
