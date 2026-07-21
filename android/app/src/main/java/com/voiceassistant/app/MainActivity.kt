@@ -173,7 +173,7 @@ class MainActivity : AppCompatActivity() {
         return sb.toString()
     }
 
-    private fun startWakeTest(word: String) {
+    private fun beginWakeTest(word: String) {
         if (!hasMic()) { requestMicOrGuide(); return }
         if (!WakeModel.isReady(this)) {
             dispatch("onWakeHeard", "唤醒模型还没下载好——请先在设置里打开「语音唤醒」等它下载完成，再来测试。")
@@ -214,7 +214,7 @@ class MainActivity : AppCompatActivity() {
         if (normalizeWord(t).contains(testWord)) dispatch("onWakeTestMatched")
     }
 
-    private fun stopWakeTest() {
+    private fun endWakeTest() {
         try { testSpeech?.stop() } catch (_: Exception) {}
         try { testSpeech?.shutdown() } catch (_: Exception) {}
         try { testRec?.close() } catch (_: Exception) {}
@@ -257,7 +257,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         appInForeground = false
-        stopWakeTest() // 退到后台就停掉前台测试，把麦克风让给后台唤醒服务
+        endWakeTest() // 退到后台就停掉前台测试，把麦克风让给后台唤醒服务
         super.onStop()
     }
 
@@ -358,10 +358,10 @@ class MainActivity : AppCompatActivity() {
 
         // 唤醒识别测试：在前台跑 Vosk，实时把听到的文字回传网页，便于排查唤醒不响应
         @JavascriptInterface
-        fun startWakeTest(word: String) = main.post { startWakeTest(word) }
+        fun startWakeTest(word: String) { main.post { beginWakeTest(word) } }
 
         @JavascriptInterface
-        fun stopWakeTest() = main.post { stopWakeTest() }
+        fun stopWakeTest() { main.post { endWakeTest() } }
 
         @JavascriptInterface
         fun wakeModelReady(): Boolean = WakeModel.isReady(this@MainActivity)
@@ -1117,7 +1117,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         recSend = false
         recFlag = false
-        stopWakeTest()
+        endWakeTest()
         try { testModel?.close() } catch (_: Exception) {}
         testModel = null
         recognizer?.destroy()
