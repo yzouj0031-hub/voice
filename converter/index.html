@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>音频转换器</title>
+<style>
+  :root{ --bg:#0b1020; --card:#131a30; --accent:#5b8cff; --accent2:#a66bff; --text:#eef2ff; --muted:#8a94b8; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; min-height:100%; background:radial-gradient(120% 90% at 50% 0%, #16204a 0%, var(--bg) 55%); color:var(--text);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif; }
+  .wrap{ max-width:560px; margin:0 auto; padding:20px 16px 40px; }
+  h1{ font-size:20px; margin:8px 0 4px; }
+  .sub{ color:var(--muted); font-size:13px; margin-bottom:18px; line-height:1.6; }
+  .card{ background:var(--card); border-radius:16px; padding:16px; margin-bottom:14px; }
+  label{ display:block; font-size:13px; color:var(--muted); margin-bottom:8px; }
+  .drop{ border:2px dashed rgba(255,255,255,.18); border-radius:14px; padding:26px 14px; text-align:center; color:var(--muted); font-size:15px; }
+  .drop.has{ border-color:var(--accent); color:var(--text); }
+  input[type=file]{ display:none; }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; }
+  select,.btn{ font-size:16px; font-family:inherit; border-radius:12px; padding:12px; border:1px solid rgba(255,255,255,.15); background:#0b1020; color:var(--text); }
+  select{ flex:1; min-width:120px; }
+  .btn{ border:none; font-weight:600; }
+  .btn.primary{ width:100%; background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff; padding:15px; margin-top:6px; }
+  .btn.primary:disabled{ opacity:.5; }
+  .bar{ height:8px; border-radius:999px; background:rgba(255,255,255,.12); overflow:hidden; margin-top:12px; display:none; }
+  .bar>i{ display:block; height:100%; width:0; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .2s; }
+  .status{ font-size:13px; color:var(--muted); margin-top:10px; min-height:18px; }
+  .result{ margin-top:12px; display:none; }
+  .result a{ display:block; text-align:center; background:#1e2740; color:var(--text); padding:14px; border-radius:12px; text-decoration:none; font-weight:600; }
+  .log{ margin-top:10px; font-size:11px; color:#6b7398; max-height:120px; overflow:auto; white-space:pre-wrap; word-break:break-all; display:none; font-family:ui-monospace,monospace; }
+  .tip{ font-size:12px; color:var(--muted); line-height:1.6; }
+  .kv{ display:flex; justify-content:space-between; font-size:13px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎵 音频转换器</h1>
+  <p class="sub">MP3 / WAV / M4A / AAC / FLAC / OGG 互转。文件在你手机本地转换，<b>不上传、免费</b>。</p>
+
+  <div class="card">
+    <label>1. 选择音频文件</label>
+    <label class="drop" id="drop">点这里选文件<br /><span style="font-size:12px">支持任意音频，也能从视频里提音频</span>
+      <input type="file" id="file" accept="audio/*,video/*" />
+    </label>
+    <div class="kv" id="fileInfo" style="display:none;color:var(--text)"></div>
+  </div>
+
+  <div class="card">
+    <label>2. 转成什么格式 / 音质</label>
+    <div class="row">
+      <select id="fmt">
+        <option value="mp3">MP3（最通用）</option>
+        <option value="m4a">M4A / AAC</option>
+        <option value="wav">WAV（无损、体积大）</option>
+        <option value="flac">FLAC（无损压缩）</option>
+        <option value="aac">AAC</option>
+        <option value="ogg">OGG</option>
+      </select>
+      <select id="quality">
+        <option value="192k">音质 192k（推荐）</option>
+        <option value="320k">音质 320k（最高）</option>
+        <option value="128k">音质 128k（省空间）</option>
+        <option value="96k">音质 96k</option>
+      </select>
+    </div>
+    <p class="tip" id="qtip" style="margin:8px 0 0">WAV / FLAC 为无损，音质档位对它们无效。</p>
+  </div>
+
+  <button class="btn primary" id="go" disabled>开始转换</button>
+  <div class="bar" id="bar"><i></i></div>
+  <div class="status" id="status">首次转换会先加载转换引擎（约十几秒，需联网一次），之后就快了。</div>
+  <div class="result" id="result"></div>
+  <div class="log" id="log"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const fileEl = $('file'), drop = $('drop'), fmtEl = $('fmt'), qualEl = $('quality');
+const go = $('go'), bar = $('bar'), barI = bar.querySelector('i'), statusEl = $('status');
+const resultEl = $('result'), logEl = $('log'), fileInfo = $('fileInfo');
+
+let chosen = null;       // 选中的文件
+let ffmpeg = null;       // FFmpeg 实例
+let loaded = false;      // 引擎是否已加载
+
+const MIME = { mp3:'audio/mpeg', m4a:'audio/mp4', aac:'audio/aac', wav:'audio/wav', flac:'audio/flac', ogg:'audio/ogg' };
+
+function human(n){ if(n<1024)return n+' B'; if(n<1048576)return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+function setStatus(t){ statusEl.textContent = t; }
+function logLine(t){ logEl.style.display='block'; logEl.textContent = (logEl.textContent + '\n' + t).slice(-4000); logEl.scrollTop = logEl.scrollHeight; }
+
+drop.addEventListener('click', () => fileEl.click());
+fileEl.addEventListener('change', () => {
+  chosen = fileEl.files[0] || null;
+  if (chosen){
+    drop.classList.add('has');
+    drop.innerHTML = '已选择：<br /><b>' + chosen.name + '</b>';
+    fileInfo.style.display='flex';
+    fileInfo.innerHTML = '<span>大小</span><span>'+human(chosen.size)+'</span>';
+    go.disabled = false;
+    resultEl.style.display='none';
+  }
+});
+
+async function ensureLoaded(){
+  if (loaded) return;
+  setStatus('正在加载转换引擎…（首次需联网下载约 30MB，只需一次）');
+  const { FFmpeg } = FFmpegWASM;
+  ffmpeg = new FFmpeg();
+  ffmpeg.on('log', ({ message }) => logLine(message));
+  ffmpeg.on('progress', ({ progress }) => {
+    if (progress >= 0 && progress <= 1){ bar.style.display='block'; barI.style.width = Math.round(progress*100) + '%'; }
+  });
+  // 单线程核心：普通网页即可运行，无需特殊服务器配置
+  const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+  await ffmpeg.load({ coreURL: base + '/ffmpeg-core.js', wasmURL: base + '/ffmpeg-core.wasm' });
+  loaded = true;
+}
+
+function argsFor(fmt, quality, inName, outName){
+  const a = ['-i', inName, '-vn']; // -vn: 丢弃视频轨，只留音频
+  if (fmt === 'wav') { a.push('-c:a','pcm_s16le'); }
+  else if (fmt === 'flac') { a.push('-c:a','flac'); }
+  else if (fmt === 'mp3') { a.push('-c:a','libmp3lame','-b:a',quality); }
+  else if (fmt === 'm4a' || fmt === 'aac') { a.push('-c:a','aac','-b:a',quality); }
+  else if (fmt === 'ogg') { a.push('-c:a','libvorbis','-b:a',quality); }
+  a.push(outName);
+  return a;
+}
+
+go.addEventListener('click', async () => {
+  if (!chosen) return;
+  go.disabled = true;
+  resultEl.style.display='none';
+  bar.style.display='block'; barI.style.width='0%';
+  try {
+    await ensureLoaded();
+    setStatus('转换中…');
+    const dot = chosen.name.lastIndexOf('.');
+    const ext = dot >= 0 ? chosen.name.slice(dot) : '';
+    const inName = 'input' + (ext || '.dat');
+    const fmt = fmtEl.value;
+    const outName = 'output.' + fmt;
+    await ffmpeg.writeFile(inName, await FFmpegUtil.fetchFile(chosen));
+    await ffmpeg.exec(argsFor(fmt, qualEl.value, inName, outName));
+    const data = await ffmpeg.readFile(outName);
+    const blob = new Blob([data.buffer], { type: MIME[fmt] || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const outBase = (dot >= 0 ? chosen.name.slice(0, dot) : chosen.name) + '.' + fmt;
+    resultEl.style.display='block';
+    resultEl.innerHTML = '<a id="dl" download="'+outBase+'" href="'+url+'">⬇ 下载 '+outBase+'（'+human(blob.size)+'）</a>';
+    barI.style.width='100%';
+    setStatus('✅ 转换完成！点上面下载。');
+  } catch (e) {
+    setStatus('转换失败：' + (e && e.message ? e.message : e) + '（把下面的日志发给开发者）');
+    logLine('ERROR: ' + (e && e.stack ? e.stack : e));
+  } finally {
+    go.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

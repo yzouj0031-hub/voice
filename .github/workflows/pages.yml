@@ -1,0 +1,38 @@
+name: 部署转换器网页
+
+on:
+  push:
+    branches:
+      - claude/voice-chat-assistant-api-wsp7sk
+    paths:
+      - 'converter/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+      - name: 打包 converter 目录
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: converter
+      - name: 部署到 Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
