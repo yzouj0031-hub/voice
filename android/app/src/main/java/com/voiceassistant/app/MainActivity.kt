@@ -30,6 +30,8 @@ import android.speech.tts.UtteranceProgressListener
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -90,6 +92,19 @@ class MainActivity : AppCompatActivity() {
     private var pageLoaded = false
     private var pendingWake = false
 
+    // 官方推荐的现代权限接口（比老式 requestPermissions 回调更可靠）
+    private val micLauncher: ActivityResultLauncher<String> =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                dispatch("onMicGranted")
+            } else {
+                val permanent = !ActivityCompat.shouldShowRequestPermissionRationale(
+                    this, Manifest.permission.RECORD_AUDIO
+                )
+                dispatch("onMicDenied", if (permanent) "1" else "0")
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -136,6 +151,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         appInForeground = true
+        // 回到前台就通知网页刷新麦克风权限横幅（从系统设置授权返回后能即时更新）
+        if (pageLoaded) dispatch("onForeground", if (hasMic()) "1" else "0")
         // 从"修改系统设置"页返回后，若已授权则自动重试挂起的亮度调节
         pendingAction?.let { a ->
             if (a.optString("tool") == "set_brightness" && Settings.System.canWrite(this)) {
@@ -151,26 +168,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureMicPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
-        }
+        if (!hasMic()) micLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     private fun hasMic() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
-    // 无麦克风权限时：能弹框就弹系统授权框（允许后 onMicGranted 自动继续）；
-    // 已被永久拒绝（弹不出框）则直接提示去系统设置手动开启。
+    // 无麦克风权限时用现代接口弹授权框（允许后 onMicGranted 自动继续）
     private fun requestMicOrGuide() {
-        val canPrompt = ActivityCompat.shouldShowRequestPermissionRationale(
-            this, Manifest.permission.RECORD_AUDIO
-        )
-        // 首次请求时 shouldShow 也是 false，所以无脑先请求一次；系统会决定是否弹框
-        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
-        dispatch("onMicPrompt", if (canPrompt) "1" else "0")
+        micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        dispatch("onMicPrompt")
     }
 
     // ---------------- 语音合成 ----------------
@@ -252,6 +260,15 @@ class MainActivity : AppCompatActivity() {
                 }
                 ContextCompat.startForegroundService(this@MainActivity, i)
             }
+        }
+
+        // 麦克风权限：查询 + 主动请求（供网页顶部横幅使用）
+        @JavascriptInterface
+        fun hasMicPermission(): Boolean = hasMic()
+
+        @JavascriptInterface
+        fun requestMic() = main.post {
+            if (hasMic()) dispatch("onMicGranted") else requestMicOrGuide()
         }
 
         // 打开本应用的系统设置页（用于手动开启被拒绝的权限）

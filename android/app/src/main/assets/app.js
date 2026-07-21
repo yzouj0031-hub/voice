@@ -340,22 +340,17 @@ window.onSpeechError = function (msg) {
   showMaybePermissionError(msg || '识别出错');
 };
 
-// 正在弹系统授权框，提示用户点允许（不是错误）
-window.onMicPrompt = function () {
-  setStatus('请在弹出的框里点「允许」，之后会自动开始');
-};
-
-// 授予麦克风权限后自动开始；被拒绝时引导去系统设置开启
+// 授予麦克风权限后自动开始；被拒绝时更新横幅并引导去设置
 window.onMicGranted = function () {
+  micDeniedPermanently = false;
+  hideMicBanner();
   setStatus('已获得麦克风权限，开始…');
   startConversation();
 };
 window.onMicDenied = function (permanent) {
-  if (permanent === '1') {
-    setStatus('麦克风权限被禁止，点这里去开启 ▸', goOpenAppSettings);
-  } else {
-    setStatus('需要麦克风权限才能语音，点这里去开启 ▸', goOpenAppSettings);
-  }
+  micDeniedPermanently = permanent === '1';
+  refreshMicBanner(false);
+  setStatus(micDeniedPermanently ? '麦克风被禁止，点上方横幅去设置开启' : '需要麦克风权限');
 };
 
 // 错误里若涉及"权限"，让状态栏可点，一键跳系统设置
@@ -645,6 +640,41 @@ function setStatus(t, action) {
 }
 statusEl.addEventListener('click', () => { if (statusAction) statusAction(); });
 function goOpenAppSettings() { if (N && N.openAppSettings) N.openAppSettings(); }
+
+// ---------- 麦克风权限横幅（没权限时一直显示在顶部，点一下就去开启）----------
+let micBanner = null;
+let micDeniedPermanently = false;
+function showMicBanner(text, onTap) {
+  if (!micBanner) {
+    micBanner = document.createElement('div');
+    micBanner.id = 'micBanner';
+    micBanner.style.cssText =
+      'position:fixed;left:0;right:0;top:0;z-index:9998;background:#c8641e;color:#fff;' +
+      'padding:12px 16px;font-size:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.4);';
+    document.body.appendChild(micBanner);
+  }
+  micBanner.textContent = text;
+  micBanner.onclick = onTap;
+  micBanner.style.display = 'block';
+}
+function hideMicBanner() { if (micBanner) micBanner.style.display = 'none'; }
+
+// 根据 App 眼里的权限状态刷新横幅
+function refreshMicBanner(hasPerm) {
+  if (!N || !N.hasMicPermission) return;
+  const ok = typeof hasPerm === 'boolean' ? hasPerm : N.hasMicPermission();
+  if (ok) { hideMicBanner(); return; }
+  if (micDeniedPermanently) {
+    showMicBanner('⚠️ 麦克风权限被禁止——点这里去系统设置里改成「允许」', goOpenAppSettings);
+  } else {
+    showMicBanner('⚠️ 还没有麦克风权限——点这里开启（会弹授权框，选「允许」）', () => {
+      if (N.requestMic) N.requestMic();
+    });
+  }
+}
+// 回到前台（含从设置页返回）时刷新
+window.onForeground = function (has) { refreshMicBanner(has === '1'); };
+window.onMicPrompt = function () { setStatus('请在弹出的框里点「允许」，之后会自动开始'); };
 function scrollToBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
 function showHint() {
   if (document.querySelector('.hint')) return;
@@ -677,4 +707,5 @@ function saveHistory() {
     openSettings();
   }
   applyWake(); // 同步后台唤醒状态
+  refreshMicBanner(); // 没麦克风权限则顶部显示横幅
 })();
